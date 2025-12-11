@@ -1,0 +1,5 @@
+# PyBridge Kitchen Sink Backend Dependencies
+pybridge>=0.1.0
+
+# Or install from local source:
+# pip install -e ../../

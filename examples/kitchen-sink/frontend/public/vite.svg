@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="bridgeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Bridge arch -->
+  <path d="M10 70 Q50 20 90 70" fill="none" stroke="url(#bridgeGradient)" stroke-width="8" stroke-linecap="round"/>
+  <!-- Bridge pillars -->
+  <rect x="15" y="60" width="8" height="25" rx="2" fill="url(#bridgeGradient)"/>
+  <rect x="77" y="60" width="8" height="25" rx="2" fill="url(#bridgeGradient)"/>
+  <!-- Connection dots -->
+  <circle cx="25" cy="55" r="4" fill="#667eea"/>
+  <circle cx="50" cy="35" r="4" fill="#7257c4"/>
+  <circle cx="75" cy="55" r="4" fill="#764ba2"/>
+</svg>
