@@ -493,7 +493,7 @@ export function createChannel<T>(command: string, args: unknown): BridgeChannel<
         internal_path = output_dir / "_internal.ts"
         with open(internal_path, "w") as f:
             f.write(self._generate_internal_module())
-        logger.info(f"Generated internal module: {internal_path}")
+        logger.debug(f"Generated internal module: {internal_path}")
 
         # Collect all models needed
         models_to_generate: set[str] = set()
@@ -553,7 +553,7 @@ export type {{ BridgeChannel, BridgeError }};
         with open(output_path, "w") as f:
             f.write(content)
 
-        logger.info(
+        logger.debug(
             f"Generated TypeScript client: {output_path} "
             f"({len(commands)} commands, {len(generated_models)} interfaces)"
         )

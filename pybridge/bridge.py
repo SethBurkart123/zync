@@ -16,6 +16,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from pydantic import ValidationError as PydanticValidationError
+from rich.console import Console
+from rich.logging import RichHandler
+from rich.panel import Panel
 
 from .channel import Channel, channel_manager
 from .errors import (
@@ -31,12 +34,29 @@ from .registry import CommandInfo, get_registry
 logger = logging.getLogger(__name__)
 
 
-def setup_logging(level: int = logging.INFO) -> None:
+def setup_logging(level: int = logging.INFO, debug: bool = False) -> None:
     """Configure logging for PyBridge."""
+    # Remove any existing handlers to avoid duplicates
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+
+    # Create rich handler
+    rich_handler = RichHandler(
+        level=level,
+        console=Console(),
+        show_time=False,
+        show_level=True,
+        show_path=debug,
+        markup=True,
+        rich_tracebacks=True,
+    )
+
+    # Configure root logger
     logging.basicConfig(
         level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[rich_handler],
+        format="%(message)s",  # RichHandler handles formatting
     )
 
 
@@ -93,7 +113,7 @@ class Bridge:
         self.debug = debug
 
         # Setup logging
-        setup_logging(logging.DEBUG if debug else logging.INFO)
+        setup_logging(logging.DEBUG if debug else logging.INFO, debug=debug)
 
         # Create FastAPI app
         self.app = FastAPI(title=title)
@@ -348,9 +368,9 @@ class Bridge:
             try:
                 generate_typescript(self.generate_ts)
                 self._ts_generated = True
-                logger.info(f"TypeScript client generated: {self.generate_ts}")
+                logger.info(f"✓ TypeScript client generated: {self.generate_ts}")
             except Exception:
-                logger.exception("Failed to generate TypeScript client")
+                logger.exception("✗ Failed to generate TypeScript client")
 
     def run(self, dev: bool = False) -> None:
         """
@@ -367,14 +387,30 @@ class Bridge:
         # Print startup info
         registry = get_registry()
         commands = registry.get_all_commands()
-        logger.info(f"Starting {self.title}")
-        logger.info(f"Registered commands: {len(commands)}")
-        for cmd in commands.values():
-            channel_marker = " [channel]" if cmd.has_channel else ""
-            logger.info(f"  - {cmd.name}{channel_marker} ({cmd.module})")
 
-        if dev:
-            logger.info("Development mode enabled (hot-reload)")
+        # Create startup banner
+        mode = "Development" if dev else "Production"
+
+        # Create panel content
+        content = f"""Server:     http://{self.host}:{self.port}
+Mode:       {mode}
+Commands:   {len(commands)}"""
+        if self.generate_ts:
+            content += f"\nTypeScript: {self.generate_ts}"
+
+        # Create and display rich panel
+        console = Console()
+        panel = Panel.fit(content, title=self.title, border_style="blue")
+        console.print("")
+        console.print(panel)
+        console.print("")
+
+        # In debug mode, show all commands
+        if self.debug:
+            logger.debug("Registered commands:")
+            for cmd in commands.values():
+                channel_marker = " [channel]" if cmd.has_channel else ""
+                logger.debug(f"  - {cmd.name}{channel_marker} ({cmd.module})")
 
             # Collect all modules that have registered commands
             command_modules = set()

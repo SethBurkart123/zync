@@ -9,6 +9,10 @@ from __future__ import annotations
 
 import logging
 
+from rich.console import Console
+from rich.logging import RichHandler
+from rich.panel import Panel
+
 logger = logging.getLogger(__name__)
 
 
@@ -70,10 +74,28 @@ def run(
 
     # Setup logging
     log_level = logging.DEBUG if debug else logging.INFO
+
+    # Remove any existing handlers to avoid duplicates
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+
+    # Create rich handler
+    rich_handler = RichHandler(
+        level=log_level,
+        console=Console(),
+        show_time=True,   # Always show timestamps in runner
+        show_level=True,
+        show_path=False,  # Don't show paths in runner (too verbose)
+        markup=True,
+        rich_tracebacks=True,
+    )
+
+    # Configure root logger
     logging.basicConfig(
         level=log_level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[rich_handler],
+        format="%(message)s",  # RichHandler handles formatting
     )
 
     # Generate TypeScript on initial startup
@@ -88,20 +110,24 @@ def run(
     registry = get_registry()
     commands = registry.get_all_commands()
 
-    print(f"\n{'='*50}")
-    print(f"  PyBridge - {title}")
-    print(f"{'='*50}")
-    print(f"  Server:     http://{host}:{port}")
-    print(f"  Mode:       {'Development' if dev else 'Production'}")
-    print(f"  Commands:   {len(commands)}")
+    # Create panel content
+    content = f"""Server:     http://{host}:{port}
+Mode:       {'Development' if dev else 'Production'}
+Commands:   {len(commands)}"""
     if generate_ts:
-        print(f"  TypeScript: {generate_ts}")
-    print(f"{'='*50}\n")
+        content += f"\nTypeScript: {generate_ts}"
 
+    # Create and display rich panel
+    console = Console()
+    panel = Panel.fit(content, title=f"PyBridge - {title}", border_style="blue")
+    console.print(panel)
+    console.print("")
+
+    # List commands
     for cmd in commands.values():
         channel_marker = " [channel]" if cmd.has_channel else ""
-        print(f"  • {cmd.name}{channel_marker}")
-    print()
+        console.print(f"  • {cmd.name}{channel_marker}")
+    console.print()
 
     if dev:
         # Development mode with hot-reload

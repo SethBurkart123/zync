@@ -116,6 +116,6 @@ def create_app() -> FastAPI:
     # Generate TypeScript client
     bridge.generate_typescript_client()
 
-    logger.info("Application reloaded")
+    logger.debug("Application reloaded")
 
     return bridge.app

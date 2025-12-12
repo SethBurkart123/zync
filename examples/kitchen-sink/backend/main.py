@@ -17,7 +17,7 @@ app = Bridge(
     host="127.0.0.1",
     port=8000,
     title="Kitchen Sink API",
-    debug=True,
+    debug=False,
 )
 
 if __name__ == "__main__":
