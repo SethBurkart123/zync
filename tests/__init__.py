@@ -1,1 +1,1 @@
-"""PyBridge test suite."""
+"""Zync test suite."""

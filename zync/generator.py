@@ -8,6 +8,7 @@ Handles Pydantic model conversion and produces tree-shakeable exports.
 from __future__ import annotations
 
 import logging
+import types
 from datetime import datetime
 from pathlib import Path
 from typing import (
@@ -50,7 +51,7 @@ def python_name_to_pascal_case(name: str) -> str:
 
 class TypeScriptGenerator:
     """
-    Generates TypeScript client code from PyBridge command registry.
+    Generates TypeScript client code from Zync command registry.
 
     Features:
     - Converts Pydantic models to TypeScript interfaces
@@ -85,68 +86,56 @@ class TypeScriptGenerator:
         if type_hint is Any:
             return "unknown"
 
-        # Get origin for generic types
         origin = get_origin(type_hint)
         args = get_args(type_hint)
 
-        # Handle Optional (Union with None)
-        if origin is Union:
+        # Handle Union types (both old Union[T, None] and new T | None syntax)
+        if origin is Union or origin is types.UnionType:
             non_none_args = [a for a in args if a is not type(None)]
             if len(non_none_args) == 1 and type(None) in args:
-                # This is Optional[X]
                 inner = self._type_to_ts(non_none_args[0], models_to_generate)
                 return f"{inner} | null"
             else:
-                # General Union
                 ts_types = [self._type_to_ts(a, models_to_generate) for a in args]
                 return " | ".join(ts_types)
 
-        # Handle List
         if origin is list:
             if args:
                 inner = self._type_to_ts(args[0], models_to_generate)
                 return f"{inner}[]"
             return "unknown[]"
 
-        # Handle Dict
         if origin is dict:
             if len(args) >= 2:
                 key_type = self._type_to_ts(args[0], models_to_generate)
                 value_type = self._type_to_ts(args[1], models_to_generate)
-                # TypeScript only allows string/number as index types
                 if key_type not in ("string", "number"):
                     key_type = "string"
                 return f"Record<{key_type}, {value_type}>"
             return "Record<string, unknown>"
 
-        # Handle Tuple
         if origin is tuple:
             if args:
                 inner_types = [self._type_to_ts(a, models_to_generate) for a in args]
                 return f"[{', '.join(inner_types)}]"
             return "unknown[]"
 
-        # Handle Set (convert to array in TS)
         if origin is set:
             if args:
                 inner = self._type_to_ts(args[0], models_to_generate)
                 return f"{inner}[]"
             return "unknown[]"
 
-        # Handle Pydantic models
         if isinstance(type_hint, type) and issubclass(type_hint, BaseModel):
             models_to_generate.add(type_hint.__name__)
             return type_hint.__name__
 
-        # Handle basic types by name
         if isinstance(type_hint, type):
             type_name = type_hint.__name__
             if type_name in PYTHON_TO_TS_TYPES:
                 return PYTHON_TO_TS_TYPES[type_hint]
-            # Could be a forward reference or custom class
             return "unknown"
 
-        # Default fallback
         return "unknown"
 
     def _generate_model_interface(
@@ -166,7 +155,6 @@ class TypeScriptGenerator:
         """
         lines = []
 
-        # Add docstring as JSDoc if available
         if model.__doc__:
             lines.append("/**")
             for line in model.__doc__.strip().split("\n"):
@@ -179,7 +167,6 @@ class TypeScriptGenerator:
             ts_name = python_name_to_camel_case(field_name)
             ts_type = self._type_to_ts(field_info.annotation, models_to_generate)
 
-            # Check if optional (has default or is Optional type)
             is_optional = (
                 not field_info.is_required() or
                 get_origin(field_info.annotation) is Union and
@@ -188,7 +175,6 @@ class TypeScriptGenerator:
 
             optional_mark = "?" if is_optional else ""
 
-            # Add field description as comment
             description = field_info.description
             if description:
                 lines.append(f"    /** {description} */")
@@ -228,9 +214,7 @@ class TypeScriptGenerator:
                 param_fields.append(f"{ts_param_name}: {ts_type}")
             params_type = "{ " + "; ".join(param_fields) + " }"
 
-        # Return type - for channel commands, extract from Channel[T]
         if cmd.has_channel:
-            # Try to get the channel's generic type from the function
             channel_type = "unknown"
             hints = {}
             try:
@@ -249,16 +233,13 @@ class TypeScriptGenerator:
             if return_type == "void" or return_type == "null":
                 return_type = "void"
 
-        # Add JSDoc
         if cmd.docstring:
             lines.append("/**")
             for line in cmd.docstring.strip().split("\n"):
                 lines.append(f" * {line.strip()}")
             lines.append(" */")
 
-        # Generate function
         if cmd.has_channel:
-            # Streaming function - returns a channel subscription
             if cmd.params:
                 lines.append(
                     f"export function {fn_name}(args: {params_type}): "
@@ -272,7 +253,6 @@ class TypeScriptGenerator:
                 lines.append(f'    return createChannel("{cmd.name}", {{}});')
             lines.append("}")
         else:
-            # Regular async function
             if cmd.params:
                 lines.append(
                     f"export async function {fn_name}(args: {params_type}): "
@@ -320,13 +300,13 @@ export interface BridgeChannel<T> {
 
 export function initBridge(baseUrl: string): void {
     _baseUrl = baseUrl.replace(/\\/$/, "");
-    console.log(`[PyBridge] Initialized with base URL: ${_baseUrl}`);
+    console.log(`[Zync] Initialized with base URL: ${_baseUrl}`);
 }
 
 export function getBaseUrl(): string {
     if (!_baseUrl) {
         throw new Error(
-            "[PyBridge] Bridge not initialized. Call initBridge(url) first."
+            "[Zync] Bridge not initialized. Call initBridge(url) first."
         );
     }
     return _baseUrl;
@@ -486,48 +466,37 @@ export function createChannel<T>(command: string, args: unknown): BridgeChannel<
         output_path = Path(output_path)
         output_dir = output_path.parent
 
-        # Create output directory if needed
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Generate internal module
         internal_path = output_dir / "_internal.ts"
         with open(internal_path, "w") as f:
             f.write(self._generate_internal_module())
         logger.debug(f"Generated internal module: {internal_path}")
 
-        # Collect all models needed
         models_to_generate: set[str] = set()
-
-        # Build the main file content
         sections: list[str] = []
 
-        # Header
-        sections.append(f"""/* Auto-generated by PyBridge - DO NOT EDIT */
+        sections.append(f"""/* Auto-generated by Zync - DO NOT EDIT */
 /* Generated: {datetime.now().isoformat()} */
 
 import {{ initBridge, request, createChannel, BridgeRequestError }} from "./_internal";
 import type {{ BridgeChannel, BridgeError }} from "./_internal";
 
-// Re-export initialization and error types
 export {{ initBridge, BridgeRequestError }};
 export type {{ BridgeChannel, BridgeError }};
 """)
 
-        # Generate command functions first to collect all needed models
         command_functions: list[str] = []
         for cmd in sorted(commands.values(), key=lambda c: c.name):
             fn_code = self._generate_command_function(cmd, models_to_generate)
             command_functions.append(fn_code)
 
-        # Also collect models from the model registry
         for model_name, model in models.items():
             models_to_generate.add(model_name)
 
-        # Generate interfaces for all collected models
         generated_models: set[str] = set()
         model_interfaces: list[str] = []
 
-        # Keep generating until all dependencies are resolved
         while models_to_generate - generated_models:
             current_batch = models_to_generate - generated_models
             for model_name in sorted(current_batch):
@@ -537,18 +506,15 @@ export type {{ BridgeChannel, BridgeError }};
                     model_interfaces.append(interface_code)
                 generated_models.add(model_name)
 
-        # Add interfaces section
         if model_interfaces:
             sections.append("// ============ Interfaces ============\n")
             sections.append("\n\n".join(model_interfaces))
             sections.append("")
 
-        # Add functions section
         if command_functions:
             sections.append("\n// ============ Commands ============\n")
             sections.append("\n\n".join(command_functions))
 
-        # Write the main file
         content = "\n".join(sections)
         with open(output_path, "w") as f:
             f.write(content)

@@ -1,28 +1,19 @@
-# 🌉 PyBridge
+# Zync
 
-**Bridge Python backends to TypeScript frontends with automatic type-safe client generation.**
+**A modern Python-TypeScript bridge with automatic type generation and hot-reloading.**
 
-PyBridge creates a seamless developer experience for building "Local First" web applications where Python handles the backend logic and TypeScript/React handles the UI. Inspired by PyTauri's command system, but designed for standard web frameworks.
-
-## ✨ Features
-
-- **Zero-Config Command Registry** - Just decorate functions with `@command` and they're automatically registered
-- **Automatic TypeScript Generation** - Type-safe client code generated from Python type hints
-- **Hot Reload Support** - Changes to Python code automatically regenerate the TypeScript client
-- **Streaming/Channels** - Real-time updates via Server-Sent Events
-- **Pydantic Integration** - Full support for Pydantic models with automatic interface generation
-- **Tree-Shakeable Exports** - Flat function exports for optimal bundling
+Zync creates a seamless developer experience for building "Local First" web applications where Python handles the backend logic and TypeScript/React handles the UI. Inspired by PyTauri's command system, but designed for standard web frameworks.
 
 ## 📦 Installation
 
 ```bash
-pip install pybridge
+pip install zync
 ```
 
 Or with development dependencies:
 
 ```bash
-pip install pybridge[dev]
+pip install zync[dev]
 ```
 
 ## 🚀 Quick Start
@@ -32,7 +23,7 @@ pip install pybridge[dev]
 ```python
 # users.py
 from pydantic import BaseModel
-from pybridge import command
+from zync import command
 
 class User(BaseModel):
     id: int
@@ -57,7 +48,7 @@ async def list_users() -> list[User]:
 
 ```python
 # main.py
-from pybridge import Bridge
+from zync import Bridge
 
 # Import modules to register their commands (side-effect imports)
 import users
@@ -96,10 +87,10 @@ users.forEach(u => console.log(u.email));
 
 #### `@command` Decorator
 
-Register a function as a PyBridge command:
+Register a function as a Zync command:
 
 ```python
-from pybridge import command
+from zync import command
 
 @command
 async def my_command(arg1: str, arg2: int = 10) -> dict:
@@ -117,7 +108,7 @@ async def internal_function() -> str:
 Main server class:
 
 ```python
-from pybridge import Bridge
+from zync import Bridge
 
 app = Bridge(
     generate_ts="../frontend/src/api.ts",  # Where to generate TypeScript
@@ -136,7 +127,7 @@ app.run(dev=True)  # dev=True enables hot-reload
 Send real-time updates to the frontend:
 
 ```python
-from pybridge import command, Channel
+from zync import command, Channel
 
 @command
 async def stream_updates(channel: Channel[dict]) -> None:
@@ -206,55 +197,12 @@ channel.onClose(() => {
 channel.close();
 ```
 
-## 🔧 Type Mapping
-
-| Python Type | TypeScript Type |
-|-------------|-----------------|
-| `str` | `string` |
-| `int` | `number` |
-| `float` | `number` |
-| `bool` | `boolean` |
-| `None` | `null` |
-| `list[T]` | `T[]` |
-| `dict[K, V]` | `Record<K, V>` |
-| `Optional[T]` | `T \| null` |
-| `BaseModel` | `interface` |
-
-## 🏗️ Project Structure
-
-Recommended project structure:
-
-```
-my-project/
-├── backend/
-│   ├── main.py           # Bridge setup
-│   ├── users.py          # User commands
-│   ├── products.py       # Product commands
-│   └── requirements.txt
-└── frontend/
-    ├── src/
-    │   ├── generated/
-    │   │   ├── api.ts        # Generated (don't edit!)
-    │   │   └── _internal.ts  # Generated (don't edit!)
-    │   ├── App.tsx
-    │   └── main.tsx
-    ├── package.json
-    └── vite.config.ts
-```
-
-## 🔄 Hot Reload Workflow
-
-1. Developer saves `users.py`
-2. Uvicorn detects change → reloads Python server
-3. On startup, Bridge regenerates `api.ts`
-4. Vite detects `api.ts` change → HMR updates the UI
-
 ## 🧪 Running the Kitchen Sink Example
 
 ```bash
 # Clone the repository
-git clone https://github.com/pybridge/pybridge
-cd pybridge
+git clone https://github.com/zync/zync
+cd zync
 
 # Install Python dependencies
 pip install -e .

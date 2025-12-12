@@ -9,7 +9,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
-from pybridge import command
+from zync import command
 
 
 class TaskPriority(str, Enum):

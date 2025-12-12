@@ -1,5 +1,5 @@
 """
-PyBridge - Bridge Python to TypeScript Frontends
+Zync - Bridge Python to TypeScript Frontends
 
 A library for creating type-safe bridges between Python backends
 and TypeScript frontends with automatic client generation.
@@ -7,7 +7,7 @@ and TypeScript frontends with automatic client generation.
 Example usage:
 
     # main.py
-    from pybridge import Bridge, command
+    from zync import Bridge, command
     from pydantic import BaseModel
 
     class User(BaseModel):
@@ -28,7 +28,7 @@ Example usage:
 
 For streaming support:
 
-    from pybridge import command, Channel
+    from zync import command, Channel
 
     @command
     async def stream_data(channel: Channel[dict]) -> None:
@@ -38,7 +38,7 @@ For streaming support:
 """
 
 __version__ = "0.1.0"
-__author__ = "PyBridge Team"
+__author__ = "Zync Team"
 
 # Core exports
 from .bridge import Bridge

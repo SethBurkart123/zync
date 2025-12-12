@@ -1,7 +1,7 @@
 """
 Kitchen Sink Example - Main Entry Point
 
-Demonstrates PyBridge setup with multiple command modules.
+Demonstrates Zync setup with multiple command modules.
 """
 
 # Import modules to register their commands (side-effect imports)
@@ -9,7 +9,7 @@ import tasks
 import users
 import weather
 
-from pybridge import Bridge
+from zync import Bridge
 
 # Create the bridge with TypeScript generation configured
 app = Bridge(

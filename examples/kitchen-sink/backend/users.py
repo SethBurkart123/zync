@@ -7,7 +7,7 @@ Demonstrates basic CRUD-like commands with Pydantic models.
 
 from pydantic import BaseModel, Field
 
-from pybridge import command
+from zync import command
 
 
 class User(BaseModel):

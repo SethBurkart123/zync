@@ -1,7 +1,7 @@
 """
 Bridge Module
 
-The main Bridge class that orchestrates the PyBridge server.
+The main Bridge class that orchestrates the Zync server.
 Handles FastAPI setup, routing, hot-reloading, and TypeScript generation.
 """
 
@@ -35,13 +35,11 @@ logger = logging.getLogger(__name__)
 
 
 def setup_logging(level: int = logging.INFO, debug: bool = False) -> None:
-    """Configure logging for PyBridge."""
-    # Remove any existing handlers to avoid duplicates
+    """Configure logging for Zync."""
     root_logger = logging.getLogger()
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
 
-    # Create rich handler
     rich_handler = RichHandler(
         level=level,
         console=Console(),
@@ -52,17 +50,16 @@ def setup_logging(level: int = logging.INFO, debug: bool = False) -> None:
         rich_tracebacks=True,
     )
 
-    # Configure root logger
     logging.basicConfig(
         level=level,
         handlers=[rich_handler],
-        format="%(message)s",  # RichHandler handles formatting
+        format="%(message)s",
     )
 
 
 class Bridge:
     """
-    The main PyBridge server class.
+    The main Zync server class.
 
     Wraps FastAPI and Uvicorn to provide:
     - Automatic command routing
@@ -71,7 +68,7 @@ class Bridge:
     - Channel/streaming support
 
     Usage:
-        from pybridge import Bridge
+        from zync import Bridge
         import users  # Side-effect import registers commands
 
         app = Bridge(
@@ -90,7 +87,7 @@ class Bridge:
         host: str = "127.0.0.1",
         port: int = 8000,
         cors_origins: list[str] | None = None,
-        title: str = "PyBridge API",
+        title: str = "Zync API",
         debug: bool = False,
     ):
         """
@@ -111,14 +108,12 @@ class Bridge:
         self.cors_origins = cors_origins or ["*"]
         self.title = title
         self.debug = debug
+        self._ts_generated = False
 
-        # Setup logging
         setup_logging(logging.DEBUG if debug else logging.INFO, debug=debug)
 
-        # Create FastAPI app
         self.app = FastAPI(title=title)
 
-        # Add CORS middleware
         self.app.add_middleware(
             CORSMiddleware,
             allow_origins=self.cors_origins,
@@ -127,14 +122,8 @@ class Bridge:
             allow_headers=["*"],
         )
 
-        # Setup routes
         self._setup_routes()
-
-        # Setup error handlers
         self._setup_error_handlers()
-
-        # Track if we've generated TS
-        self._ts_generated = False
 
     def _setup_routes(self) -> None:
         """Setup the API routes."""
@@ -201,16 +190,13 @@ class Bridge:
                     f"Command '{command_name}' does not support channels"
                 )
 
-            # Parse request body
             try:
                 body = await request.json() if await request.body() else {}
             except Exception as e:
                 raise ValidationError(f"Invalid JSON body: {e}")
 
-            # Create channel
             channel = await channel_manager.create()
 
-            # Start command execution in background
             asyncio.create_task(
                 self._execute_channel_command(cmd, body, channel)
             )
@@ -305,16 +291,13 @@ class Bridge:
             CommandExecutionError: If command execution fails.
         """
         try:
-            # Build kwargs from args
             kwargs = {}
             for param_name in cmd.params:
                 if param_name in args:
                     kwargs[param_name] = args[param_name]
 
-            # Execute the command
             result = await cmd.func(**kwargs)
 
-            # Serialize Pydantic models
             if isinstance(result, BaseModel):
                 return result.model_dump()
             elif isinstance(result, list):
@@ -346,16 +329,12 @@ class Bridge:
             channel: The channel for streaming responses.
         """
         try:
-            # Build kwargs from args
             kwargs = {"channel": channel}
             for param_name in cmd.params:
                 if param_name in args:
                     kwargs[param_name] = args[param_name]
 
-            # Execute the command
             await cmd.func(**kwargs)
-
-            # Close channel when done
             await channel.close()
 
         except Exception as e:
@@ -381,47 +360,37 @@ class Bridge:
         """
         import uvicorn
 
-        # Generate TypeScript on startup
         self.generate_typescript_client()
 
-        # Print startup info
         registry = get_registry()
         commands = registry.get_all_commands()
 
-        # Create startup banner
         mode = "Development" if dev else "Production"
 
-        # Create panel content
         content = f"""Server:     http://{self.host}:{self.port}
 Mode:       {mode}
 Commands:   {len(commands)}"""
         if self.generate_ts:
             content += f"\nTypeScript: {self.generate_ts}"
 
-        # Create and display rich panel
         console = Console()
         panel = Panel.fit(content, title=self.title, border_style="blue")
         console.print("")
         console.print(panel)
         console.print("")
 
-        # In debug mode, show all commands
         if self.debug:
             logger.debug("Registered commands:")
             for cmd in commands.values():
                 channel_marker = " [channel]" if cmd.has_channel else ""
                 logger.debug(f"  - {cmd.name}{channel_marker} ({cmd.module})")
 
-            # Collect all modules that have registered commands
             command_modules = set()
             for cmd in commands.values():
-                # Get the module name from the command
                 module_name = cmd.module
-                # Skip internal pybridge modules
-                if not module_name.startswith("pybridge"):
+                if not module_name.startswith("zync"):
                     command_modules.add(module_name)
 
-            # Configure the server for factory mode
             from . import server
             server.set_config(
                 generate_ts=self.generate_ts,
@@ -433,9 +402,8 @@ Commands:   {len(commands)}"""
                 import_modules=list(command_modules),
             )
 
-            # Run with reload using factory pattern
             uvicorn.run(
-                "pybridge.server:create_app",
+                "zync.server:create_app",
                 host=self.host,
                 port=self.port,
                 reload=True,

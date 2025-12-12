@@ -15,7 +15,7 @@ import users
 import weather
 
 # Generate the TypeScript
-from pybridge import generate_typescript
+from zync import generate_typescript
 
 output_path = "../frontend/src/generated/api.ts"
 generate_typescript(output_path)

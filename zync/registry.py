@@ -1,7 +1,7 @@
 """
 Command Registry Module
 
-Provides the @command decorator and global registry for PyBridge commands.
+Provides the @command decorator and global registry for Zync commands.
 Commands are registered automatically when decorated, enabling zero-config setup.
 """
 
@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import types
 from collections.abc import Callable
 from functools import wraps
-from typing import Any, get_type_hints
+from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from pydantic import BaseModel
 
@@ -45,7 +46,7 @@ class CommandInfo:
 
 class CommandRegistry:
     """
-    Global registry for all PyBridge commands.
+    Global registry for all Zync commands.
 
     Maintains a flat namespace of commands and ensures no duplicates.
     Collects Pydantic models used in command signatures for TS generation.
@@ -117,20 +118,25 @@ class CommandRegistry:
         if type_hint is None:
             return
 
-        origin = getattr(type_hint, "__origin__", None)
+        origin = get_origin(type_hint)
 
-        # Handle Optional, List, Dict, etc.
+        # Handle Union types (both old Union[T, None] and new T | None syntax)
+        if origin is Union or origin is types.UnionType:
+            args = get_args(type_hint)
+            for arg in args:
+                if arg is not type(None):  # Skip None types in unions
+                    self.collect_models_from_type(arg)
+            return
+
         if origin is not None:
-            args = getattr(type_hint, "__args__", ())
+            args = get_args(type_hint)
             for arg in args:
                 self.collect_models_from_type(arg)
             return
 
-        # Handle Pydantic models
         if isinstance(type_hint, type) and issubclass(type_hint, BaseModel):
             if type_hint.__name__ not in self._models:
                 self._models[type_hint.__name__] = type_hint
-                # Recursively collect nested models from fields
                 for field_name, field_info in type_hint.model_fields.items():
                     self.collect_models_from_type(field_info.annotation)
 
@@ -141,7 +147,7 @@ _registry = CommandRegistry.get_instance()
 
 def command(func: Callable = None, *, name: str | None = None) -> Callable:
     """
-    Decorator to register a function as a PyBridge command.
+    Decorator to register a function as a Zync command.
 
     Usage:
         @command
@@ -160,16 +166,13 @@ def command(func: Callable = None, *, name: str | None = None) -> Callable:
         The decorated function.
     """
     def decorator(fn: Callable) -> Callable:
-        # Determine command name
         cmd_name = name or fn.__name__
 
-        # Get type hints
         try:
             hints = get_type_hints(fn)
         except Exception:
             hints = {}
 
-        # Extract parameters (excluding 'return' and 'channel')
         sig = inspect.signature(fn)
         params: dict[str, type] = {}
         has_channel = False
@@ -177,7 +180,6 @@ def command(func: Callable = None, *, name: str | None = None) -> Callable:
         for param_name, param in sig.parameters.items():
             if param_name == "channel":
                 has_channel = True
-                # Collect the Channel's generic type parameter
                 channel_type = hints.get("channel")
                 if channel_type:
                     from typing import get_args
@@ -188,21 +190,14 @@ def command(func: Callable = None, *, name: str | None = None) -> Callable:
 
             param_type = hints.get(param_name, Any)
             params[param_name] = param_type
-
-            # Collect any Pydantic models from parameter types
             _registry.collect_models_from_type(param_type)
 
-        # Get return type
         return_type = hints.get("return", None)
         _registry.collect_models_from_type(return_type)
 
-        # Check if async
         is_async = asyncio.iscoroutinefunction(fn)
-
-        # Get module name
         module = fn.__module__
 
-        # Create command info
         cmd_info = CommandInfo(
             name=cmd_name,
             func=fn,
@@ -214,10 +209,8 @@ def command(func: Callable = None, *, name: str | None = None) -> Callable:
             has_channel=has_channel,
         )
 
-        # Register the command
         _registry.register(cmd_info)
 
-        # Preserve the original function
         @wraps(fn)
         async def async_wrapper(*args, **kwargs):
             if is_async:
@@ -226,10 +219,9 @@ def command(func: Callable = None, *, name: str | None = None) -> Callable:
                 loop = asyncio.get_event_loop()
                 return await loop.run_in_executor(None, lambda: fn(*args, **kwargs))
 
-        async_wrapper._pybridge_command = cmd_info
+        async_wrapper._zync_command = cmd_info
         return async_wrapper
 
-    # Handle both @command and @command() syntax
     if func is not None:
         return decorator(func)
     return decorator

@@ -1,12 +1,12 @@
 """
-Tests for the PyBridge registry module.
+Tests for the Zync registry module.
 """
 
 
 import pytest
 from pydantic import BaseModel
 
-from pybridge.registry import CommandRegistry, command, get_registry
+from zync.registry import CommandRegistry, command, get_registry
 
 
 class TestUser(BaseModel):
@@ -164,7 +164,7 @@ def test_command_docstring():
 
 def test_channel_command():
     """Test command with channel parameter."""
-    from pybridge.channel import Channel
+    from zync.channel import Channel
 
     @command
     async def stream_data(query: str, channel: Channel[dict]) -> None:

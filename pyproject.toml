@@ -3,14 +3,14 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pybridge"
+name = "zync"
 version = "0.1.0"
 description = "Bridge Python backends to TypeScript frontends with automatic type-safe client generation"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 authors = [
-    {name = "PyBridge Team"}
+    {name = "Zync Team"}
 ]
 keywords = [
     "typescript",
@@ -41,6 +41,7 @@ dependencies = [
     "uvicorn[standard]>=0.23.0",
     "pydantic>=2.0.0",
     "rich>=14.2.0",
+    "pytest>=9.0.2",
 ]
 
 [project.optional-dependencies]
@@ -54,16 +55,16 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/pybridge/pybridge"
-Documentation = "https://github.com/pybridge/pybridge#readme"
-Repository = "https://github.com/pybridge/pybridge"
+Homepage = "https://github.com/zync/zync"
+Documentation = "https://github.com/zync/zync#readme"
+Repository = "https://github.com/zync/zync"
 
 [project.scripts]
-pybridge = "pybridge.cli:main"
+zync = "zync.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["pybridge*"]
+include = ["zync*"]
 
 [tool.black]
 line-length = 88

@@ -19,7 +19,7 @@ from fastapi import FastAPI
 logger = logging.getLogger(__name__)
 
 # Environment variable name for passing config between processes
-_CONFIG_ENV_VAR = "PYBRIDGE_SERVER_CONFIG"
+_CONFIG_ENV_VAR = "ZYNC_SERVER_CONFIG"
 
 
 def set_config(
@@ -27,7 +27,7 @@ def set_config(
     host: str = "127.0.0.1",
     port: int = 8000,
     cors_origins: list[str] | None = None,
-    title: str = "PyBridge API",
+    title: str = "Zync API",
     debug: bool = False,
     main_module: str | None = None,
     import_modules: list[str] | None = None,
@@ -63,7 +63,7 @@ def get_config() -> dict[str, Any]:
         "host": "127.0.0.1",
         "port": 8000,
         "cors_origins": ["*"],
-        "title": "PyBridge API",
+        "title": "Zync API",
         "debug": False,
         "main_module": None,
         "import_modules": [],
@@ -81,39 +81,32 @@ def create_app() -> FastAPI:
     from .bridge import Bridge
     from .registry import CommandRegistry
 
-    # Get config from environment variable
     config = get_config()
 
-    # Reset the registry to clear old commands
     CommandRegistry.reset()
 
-    # Re-import command modules to re-register commands
     import_modules = config.get("import_modules", [])
     logger.debug(f"Re-importing modules: {import_modules}")
 
     for module_name in import_modules:
         try:
-            # Remove from cache if present
             if module_name in sys.modules:
                 del sys.modules[module_name]
 
-            # Import the module (triggers @command decorators)
             importlib.import_module(module_name)
             logger.debug(f"Imported module: {module_name}")
         except Exception as e:
             logger.error(f"Failed to import module '{module_name}': {e}")
 
-    # Create the bridge
     bridge = Bridge(
         generate_ts=config.get("generate_ts"),
         host=config.get("host", "127.0.0.1"),
         port=config.get("port", 8000),
         cors_origins=config.get("cors_origins"),
-        title=config.get("title", "PyBridge API"),
+        title=config.get("title", "Zync API"),
         debug=config.get("debug", False),
     )
 
-    # Generate TypeScript client
     bridge.generate_typescript_client()
 
     logger.debug("Application reloaded")

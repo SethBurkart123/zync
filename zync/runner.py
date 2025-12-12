@@ -21,16 +21,16 @@ def run(
     host: str = "127.0.0.1",
     port: int = 8000,
     cors_origins: list[str] | None = None,
-    title: str = "PyBridge API",
+    title: str = "Zync API",
     debug: bool = False,
     dev: bool = False,
     reload_dirs: list[str] | None = None,
     import_modules: list[str] | None = None,
 ) -> None:
     """
-    Run the PyBridge server.
+    Run the Zync server.
 
-    This is the main entry point for starting a PyBridge application.
+    This is the main entry point for starting a Zync application.
     It handles both production and development modes.
 
     Args:
@@ -45,7 +45,7 @@ def run(
         import_modules: List of module names containing commands to import.
 
     Example:
-        from pybridge import run
+        from zync import run
 
         if __name__ == "__main__":
             run(
@@ -72,33 +72,28 @@ def run(
         import_modules=import_modules or [],
     )
 
-    # Setup logging
     log_level = logging.DEBUG if debug else logging.INFO
 
-    # Remove any existing handlers to avoid duplicates
     root_logger = logging.getLogger()
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
 
-    # Create rich handler
     rich_handler = RichHandler(
         level=log_level,
         console=Console(),
-        show_time=True,   # Always show timestamps in runner
+        show_time=True,
         show_level=True,
-        show_path=False,  # Don't show paths in runner (too verbose)
+        show_path=False,
         markup=True,
         rich_tracebacks=True,
     )
 
-    # Configure root logger
     logging.basicConfig(
         level=log_level,
         handlers=[rich_handler],
-        format="%(message)s",  # RichHandler handles formatting
+        format="%(message)s",
     )
 
-    # Generate TypeScript on initial startup
     if generate_ts:
         try:
             generate_typescript(generate_ts)
@@ -106,39 +101,32 @@ def run(
         except Exception as e:
             logger.error(f"Failed to generate TypeScript client: {e}")
 
-    # Print startup info
     registry = get_registry()
     commands = registry.get_all_commands()
 
-    # Create panel content
     content = f"""Server:     http://{host}:{port}
 Mode:       {'Development' if dev else 'Production'}
 Commands:   {len(commands)}"""
     if generate_ts:
         content += f"\nTypeScript: {generate_ts}"
 
-    # Create and display rich panel
     console = Console()
-    panel = Panel.fit(content, title=f"PyBridge - {title}", border_style="blue")
+    panel = Panel.fit(content, title=f"Zync - {title}", border_style="blue")
     console.print(panel)
     console.print("")
 
-    # List commands
     for cmd in commands.values():
         channel_marker = " [channel]" if cmd.has_channel else ""
         console.print(f"  • {cmd.name}{channel_marker}")
     console.print()
 
     if dev:
-        # Development mode with hot-reload
         logger.info("Starting in development mode with hot-reload...")
 
-        # Determine reload directories
         watch_dirs = reload_dirs or ["."]
 
-        # Run with factory pattern for proper reloading
         uvicorn.run(
-            "pybridge.server:create_app",
+            "zync.server:create_app",
             host=host,
             port=port,
             reload=True,
@@ -147,7 +135,6 @@ Commands:   {len(commands)}"""
             log_level="debug" if debug else "info",
         )
     else:
-        # Production mode
         bridge = Bridge(
             generate_ts=generate_ts,
             host=host,
