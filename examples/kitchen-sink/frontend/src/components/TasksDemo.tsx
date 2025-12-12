@@ -258,16 +258,16 @@ const TasksDemo: React.FC = () => {
           <div key={task.id} style={styles.taskCard}>
             <div style={styles.taskHeader}>
               <span style={styles.taskStatus}>
-                {getStatusEmoji(task.status)}
+                {getStatusEmoji(task.status ?? 'todo')}
               </span>
               <h4 style={styles.taskTitle}>{task.title}</h4>
               <span
                 style={{
                   ...styles.priority,
-                  background: getPriorityColor(task.priority),
+                  background: getPriorityColor(task.priority ?? 'medium'),
                 }}
               >
-                {task.priority.toUpperCase()}
+                {(task.priority ?? 'medium').toUpperCase()}
               </span>
             </div>
             
@@ -276,7 +276,7 @@ const TasksDemo: React.FC = () => {
             )}
             
             <div style={styles.taskLabels}>
-              {task.labels.map((label) => (
+              {(task.labels ?? []).map((label) => (
                 <span
                   key={label.id}
                   style={{
@@ -291,7 +291,7 @@ const TasksDemo: React.FC = () => {
             
             <div style={styles.taskActions}>
               <select
-                value={task.status}
+                value={task.status ?? 'todo'}
                 onChange={(e) => handleUpdateStatus(task.id, e.target.value)}
                 style={styles.statusSelect}
               >

@@ -59,16 +59,18 @@ def test_basic_generation(temp_dir):
     assert "export interface SimpleModel" in content
     assert "id: number" in content
     assert "name: string" in content
-    assert "isActive" in content  # camelCase conversion
+    assert "isActive" in content  # camelCase conversion for model fields
 
     # Check function generation
     assert "export async function getItem" in content
-    assert "itemId: number" in content  # camelCase
+    assert "args: { itemId: number }" in content  # camelCase in TypeScript signature
     assert "Promise<SimpleModel>" in content
+    # Verify the conversion happens at generation time
+    assert "{ item_id: args.itemId }" in content
 
 
 def test_internal_module_generation(temp_dir):
-    """Test that the internal module is generated."""
+    """Test that the internal module is generated without conversion functions."""
     @command
     async def dummy() -> str:
         return "test"
@@ -87,9 +89,12 @@ def test_internal_module_generation(temp_dir):
     assert "BridgeError" in content
     assert "BridgeRequestError" in content
 
+    assert "convertKeysToSnakeCase" not in content
+    assert "convertKeysToCamelCase" not in content
+
 
 def test_snake_to_camel_conversion(temp_dir):
-    """Test that snake_case is converted to camelCase."""
+    """Test that snake_case is converted to camelCase at generation time."""
     @command
     async def get_user_by_email(user_email: str) -> SimpleModel:
         return SimpleModel(id=1, name="Test")
@@ -101,7 +106,9 @@ def test_snake_to_camel_conversion(temp_dir):
         content = f.read()
 
     assert "getUserByEmail" in content
-    assert "userEmail: string" in content
+    assert "args: { userEmail: string }" in content
+    # Verify conversion at generation time
+    assert "{ user_email: args.userEmail }" in content
 
 
 def test_list_type_generation(temp_dir):
@@ -131,7 +138,7 @@ def test_optional_type_generation(temp_dir):
     with open(output_path) as f:
         content = f.read()
 
-    assert "SimpleModel | null" in content
+    assert "SimpleModel | undefined" in content
 
 
 def test_dict_type_generation(temp_dir):
@@ -161,7 +168,6 @@ def test_nested_model_generation(temp_dir):
     with open(output_path) as f:
         content = f.read()
 
-    # Both models should be generated
     assert "export interface NestedModel" in content
     assert "export interface SimpleModel" in content
     assert "items" in content
@@ -287,3 +293,4 @@ def test_type_mapping():
     assert generator._type_to_ts(float, models) == "number"
     assert generator._type_to_ts(bool, models) == "boolean"
     assert generator._type_to_ts(None, models) == "void"
+    assert generator._type_to_ts(type(None), models) == "undefined"

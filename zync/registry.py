@@ -30,6 +30,7 @@ class CommandInfo:
         docstring: str | None,
         module: str,
         has_channel: bool = False,
+        optional_params: set[str] | None = None,
     ):
         self.name = name
         self.func = func
@@ -39,6 +40,7 @@ class CommandInfo:
         self.docstring = docstring
         self.module = module
         self.has_channel = has_channel
+        self.optional_params = optional_params or set()
 
     def __repr__(self) -> str:
         return f"CommandInfo(name={self.name!r}, module={self.module!r})"
@@ -175,6 +177,7 @@ def command(func: Callable = None, *, name: str | None = None) -> Callable:
 
         sig = inspect.signature(fn)
         params: dict[str, type] = {}
+        optional_params: set[str] = set()
         has_channel = False
 
         for param_name, param in sig.parameters.items():
@@ -192,6 +195,10 @@ def command(func: Callable = None, *, name: str | None = None) -> Callable:
             params[param_name] = param_type
             _registry.collect_models_from_type(param_type)
 
+            # Track params with defaults as optional
+            if param.default is not inspect.Parameter.empty:
+                optional_params.add(param_name)
+
         return_type = hints.get("return", None)
         _registry.collect_models_from_type(return_type)
 
@@ -207,6 +214,7 @@ def command(func: Callable = None, *, name: str | None = None) -> Callable:
             docstring=fn.__doc__,
             module=module,
             has_channel=has_channel,
+            optional_params=optional_params,
         )
 
         _registry.register(cmd_info)

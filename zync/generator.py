@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import types
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import (
     Any,
@@ -33,8 +34,8 @@ PYTHON_TO_TS_TYPES: dict[Any, str] = {
     float: "number",
     bool: "boolean",
     bytes: "string",  # Base64 encoded
-    type(None): "null",
-    None: "null",
+    type(None): "undefined",
+    None: "undefined",
 }
 
 
@@ -94,7 +95,7 @@ class TypeScriptGenerator:
             non_none_args = [a for a in args if a is not type(None)]
             if len(non_none_args) == 1 and type(None) in args:
                 inner = self._type_to_ts(non_none_args[0], models_to_generate)
-                return f"{inner} | null"
+                return f"{inner} | undefined"
             else:
                 ts_types = [self._type_to_ts(a, models_to_generate) for a in args]
                 return " | ".join(ts_types)
@@ -129,6 +130,15 @@ class TypeScriptGenerator:
         if isinstance(type_hint, type) and issubclass(type_hint, BaseModel):
             models_to_generate.add(type_hint.__name__)
             return type_hint.__name__
+
+        # Handle Enum types - convert to string literal union for str enums
+        if isinstance(type_hint, type) and issubclass(type_hint, Enum):
+            # For string enums, generate a union of string literals
+            if issubclass(type_hint, str):
+                literals = [f'"{member.value}"' for member in type_hint]
+                return " | ".join(literals)
+            # For other enums, use the enum values' types
+            return "string"
 
         if isinstance(type_hint, type):
             type_name = type_hint.__name__
@@ -204,14 +214,29 @@ class TypeScriptGenerator:
         # Function name (convert to camelCase)
         fn_name = python_name_to_camel_case(cmd.name)
 
-        # Generate parameter interface if there are params
+        # Generate parameter interface with camelCase names
         params_type = "void"
+        param_mapping = []  # List of (camelCase, snake_case, is_optional) tuples
         if cmd.params:
             param_fields = []
+            required_fields = []
+            optional_fields = []
             for param_name, param_type in cmd.params.items():
+                # Convert to camelCase for TypeScript
                 ts_param_name = python_name_to_camel_case(param_name)
                 ts_type = self._type_to_ts(param_type, models_to_generate)
-                param_fields.append(f"{ts_param_name}: {ts_type}")
+                is_optional = param_name in cmd.optional_params
+
+                # Use ?: for optional params, strip " | undefined" suffix if present
+                if is_optional:
+                    clean_type = ts_type.removesuffix(" | undefined")
+                    optional_fields.append(f"{ts_param_name}?: {clean_type}")
+                else:
+                    required_fields.append(f"{ts_param_name}: {ts_type}")
+                param_mapping.append((ts_param_name, param_name, is_optional))
+
+            # Put required fields first, then optional fields
+            param_fields = required_fields + optional_fields
             params_type = "{ " + "; ".join(param_fields) + " }"
 
         if cmd.has_channel:
@@ -230,7 +255,7 @@ class TypeScriptGenerator:
             return_type = channel_type
         else:
             return_type = self._type_to_ts(cmd.return_type, models_to_generate)
-            if return_type == "void" or return_type == "null":
+            if return_type == "void" or return_type == "undefined":
                 return_type = "void"
 
         if cmd.docstring:
@@ -241,11 +266,14 @@ class TypeScriptGenerator:
 
         if cmd.has_channel:
             if cmd.params:
+                # Build object literal mapping camelCase to snake_case
+                mappings = [f"{snake}: args.{camel}" for camel, snake, _ in param_mapping]
+                args_obj = "{ " + ", ".join(mappings) + " }"
                 lines.append(
                     f"export function {fn_name}(args: {params_type}): "
                     f"BridgeChannel<{return_type}> {{"
                 )
-                lines.append(f'    return createChannel("{cmd.name}", args);')
+                lines.append(f'    return createChannel("{cmd.name}", {args_obj});')
             else:
                 lines.append(
                     f"export function {fn_name}(): BridgeChannel<{return_type}> {{"
@@ -254,11 +282,14 @@ class TypeScriptGenerator:
             lines.append("}")
         else:
             if cmd.params:
+                # Build object literal mapping camelCase to snake_case
+                mappings = [f"{snake}: args.{camel}" for camel, snake, _ in param_mapping]
+                args_obj = "{ " + ", ".join(mappings) + " }"
                 lines.append(
                     f"export async function {fn_name}(args: {params_type}): "
                     f"Promise<{return_type}> {{"
                 )
-                lines.append(f'    return request("{cmd.name}", args);')
+                lines.append(f'    return request("{cmd.name}", {args_obj});')
             else:
                 lines.append(
                     f"export async function {fn_name}(): Promise<{return_type}> {{"
@@ -312,34 +343,6 @@ export function getBaseUrl(): string {
     return _baseUrl;
 }
 
-function convertKeysToSnakeCase(obj: unknown): unknown {
-    if (obj === null || obj === undefined) return obj;
-    if (Array.isArray(obj)) return obj.map(convertKeysToSnakeCase);
-    if (typeof obj === "object") {
-        const result: Record<string, unknown> = {};
-        for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
-            const snakeKey = key.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`);
-            result[snakeKey] = convertKeysToSnakeCase(value);
-        }
-        return result;
-    }
-    return obj;
-}
-
-function convertKeysToCamelCase(obj: unknown): unknown {
-    if (obj === null || obj === undefined) return obj;
-    if (Array.isArray(obj)) return obj.map(convertKeysToCamelCase);
-    if (typeof obj === "object") {
-        const result: Record<string, unknown> = {};
-        for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
-            const camelKey = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
-            result[camelKey] = convertKeysToCamelCase(value);
-        }
-        return result;
-    }
-    return obj;
-}
-
 export async function request<T>(command: string, args: unknown): Promise<T> {
     const baseUrl = getBaseUrl();
     const url = `${baseUrl}/command/${command}`;
@@ -349,7 +352,7 @@ export async function request<T>(command: string, args: unknown): Promise<T> {
         headers: {
             "Content-Type": "application/json",
         },
-        body: JSON.stringify(convertKeysToSnakeCase(args)),
+        body: JSON.stringify(args),
     });
 
     const data = await response.json();
@@ -362,7 +365,7 @@ export async function request<T>(command: string, args: unknown): Promise<T> {
         });
     }
 
-    return convertKeysToCamelCase(data.result) as T;
+    return data.result as T;
 }
 
 export function createChannel<T>(command: string, args: unknown): BridgeChannel<T> {
@@ -382,7 +385,7 @@ export function createChannel<T>(command: string, args: unknown): BridgeChannel<
             headers: {
                 "Content-Type": "application/json",
             },
-            body: JSON.stringify(convertKeysToSnakeCase(args)),
+            body: JSON.stringify(args),
         });
 
         if (!initResponse.ok) {
@@ -405,11 +408,11 @@ export function createChannel<T>(command: string, args: unknown): BridgeChannel<
         eventSource.addEventListener("message", (event) => {
             if (messageCallback) {
                 const data = JSON.parse(event.data);
-                messageCallback(convertKeysToCamelCase(data) as T);
+                messageCallback(data as T);
             }
         });
 
-        eventSource.addEventListener("error", (event) => {
+        eventSource.addEventListener("error", () => {
             if (errorCallback) {
                 errorCallback({
                     code: "CHANNEL_ERROR",
