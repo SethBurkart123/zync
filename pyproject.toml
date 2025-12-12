@@ -70,8 +70,15 @@ target-version = ["py310", "py311", "py312"]
 
 [tool.ruff]
 line-length = 88
+
+[tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Side-effect imports for command registration
+"examples/kitchen-sink/backend/main.py" = ["F401"]
+"examples/kitchen-sink/backend/generate_ts.py" = ["F401"]
 
 [tool.mypy]
 python_version = "3.10"

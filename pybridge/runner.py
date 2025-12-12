@@ -7,32 +7,28 @@ Handles Uvicorn configuration and process management.
 
 from __future__ import annotations
 
-import os
-import sys
-from pathlib import Path
-from typing import Any, Dict, List, Optional
 import logging
 
 logger = logging.getLogger(__name__)
 
 
 def run(
-    generate_ts: Optional[str] = None,
+    generate_ts: str | None = None,
     host: str = "127.0.0.1",
     port: int = 8000,
-    cors_origins: Optional[List[str]] = None,
+    cors_origins: list[str] | None = None,
     title: str = "PyBridge API",
     debug: bool = False,
     dev: bool = False,
-    reload_dirs: Optional[List[str]] = None,
-    import_modules: Optional[List[str]] = None,
+    reload_dirs: list[str] | None = None,
+    import_modules: list[str] | None = None,
 ) -> None:
     """
     Run the PyBridge server.
-    
+
     This is the main entry point for starting a PyBridge application.
     It handles both production and development modes.
-    
+
     Args:
         generate_ts: Path where TypeScript client will be generated.
         host: Host to bind the server to.
@@ -43,10 +39,10 @@ def run(
         dev: Enable development mode with hot-reloading.
         reload_dirs: Directories to watch for changes (dev mode only).
         import_modules: List of module names containing commands to import.
-    
+
     Example:
         from pybridge import run
-        
+
         if __name__ == "__main__":
             run(
                 generate_ts="../frontend/src/api.ts",
@@ -55,12 +51,12 @@ def run(
             )
     """
     import uvicorn
-    
-    from .server import set_config
+
     from .bridge import Bridge
     from .generator import generate_typescript
     from .registry import get_registry
-    
+    from .server import set_config
+
     # Set configuration for factory mode
     set_config(
         generate_ts=generate_ts,
@@ -71,7 +67,7 @@ def run(
         debug=debug,
         import_modules=import_modules or [],
     )
-    
+
     # Setup logging
     log_level = logging.DEBUG if debug else logging.INFO
     logging.basicConfig(
@@ -79,7 +75,7 @@ def run(
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    
+
     # Generate TypeScript on initial startup
     if generate_ts:
         try:
@@ -87,11 +83,11 @@ def run(
             logger.info(f"TypeScript client generated: {generate_ts}")
         except Exception as e:
             logger.error(f"Failed to generate TypeScript client: {e}")
-    
+
     # Print startup info
     registry = get_registry()
     commands = registry.get_all_commands()
-    
+
     print(f"\n{'='*50}")
     print(f"  PyBridge - {title}")
     print(f"{'='*50}")
@@ -101,19 +97,19 @@ def run(
     if generate_ts:
         print(f"  TypeScript: {generate_ts}")
     print(f"{'='*50}\n")
-    
+
     for cmd in commands.values():
         channel_marker = " [channel]" if cmd.has_channel else ""
         print(f"  • {cmd.name}{channel_marker}")
     print()
-    
+
     if dev:
         # Development mode with hot-reload
         logger.info("Starting in development mode with hot-reload...")
-        
+
         # Determine reload directories
         watch_dirs = reload_dirs or ["."]
-        
+
         # Run with factory pattern for proper reloading
         uvicorn.run(
             "pybridge.server:create_app",
@@ -134,7 +130,7 @@ def run(
             title=title,
             debug=debug,
         )
-        
+
         uvicorn.run(
             bridge.app,
             host=host,

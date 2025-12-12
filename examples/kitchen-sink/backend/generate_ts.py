@@ -3,16 +3,16 @@
 Script to generate the TypeScript client for the kitchen sink example.
 """
 
-import sys
 import os
+import sys
 
 # Add the backend directory to the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Import the command modules to register their commands
+import tasks
 import users
 import weather
-import tasks
 
 # Generate the TypeScript
 from pybridge import generate_typescript

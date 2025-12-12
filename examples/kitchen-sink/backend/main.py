@@ -4,12 +4,12 @@ Kitchen Sink Example - Main Entry Point
 Demonstrates PyBridge setup with multiple command modules.
 """
 
-from pybridge import Bridge
-
 # Import modules to register their commands (side-effect imports)
+import tasks
 import users
 import weather
-import tasks
+
+from pybridge import Bridge
 
 # Create the bridge with TypeScript generation configured
 app = Bridge(

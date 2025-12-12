@@ -12,7 +12,7 @@ import json
 import logging
 import os
 import sys
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import FastAPI
 
@@ -23,18 +23,18 @@ _CONFIG_ENV_VAR = "PYBRIDGE_SERVER_CONFIG"
 
 
 def set_config(
-    generate_ts: Optional[str] = None,
+    generate_ts: str | None = None,
     host: str = "127.0.0.1",
     port: int = 8000,
-    cors_origins: Optional[list[str]] = None,
+    cors_origins: list[str] | None = None,
     title: str = "PyBridge API",
     debug: bool = False,
-    main_module: Optional[str] = None,
-    import_modules: Optional[list[str]] = None,
+    main_module: str | None = None,
+    import_modules: list[str] | None = None,
 ) -> None:
     """
     Set the server configuration via environment variable.
-    
+
     Called before run() to configure the server for factory mode.
     Uses environment variables to pass config to Uvicorn's subprocess.
     """
@@ -52,7 +52,7 @@ def set_config(
     os.environ[_CONFIG_ENV_VAR] = json.dumps(config)
 
 
-def get_config() -> Dict[str, Any]:
+def get_config() -> dict[str, Any]:
     """Get the current configuration from environment variable."""
     config_json = os.environ.get(_CONFIG_ENV_VAR)
     if config_json:
@@ -73,36 +73,36 @@ def get_config() -> Dict[str, Any]:
 def create_app() -> FastAPI:
     """
     Factory function for creating the FastAPI app.
-    
+
     This is called by Uvicorn on each reload.
     It re-imports command modules to re-register commands,
     then creates a fresh Bridge instance and generates TypeScript.
     """
-    from .registry import CommandRegistry
     from .bridge import Bridge
-    
+    from .registry import CommandRegistry
+
     # Get config from environment variable
     config = get_config()
-    
+
     # Reset the registry to clear old commands
     CommandRegistry.reset()
-    
+
     # Re-import command modules to re-register commands
     import_modules = config.get("import_modules", [])
     logger.debug(f"Re-importing modules: {import_modules}")
-    
+
     for module_name in import_modules:
         try:
             # Remove from cache if present
             if module_name in sys.modules:
                 del sys.modules[module_name]
-            
+
             # Import the module (triggers @command decorators)
             importlib.import_module(module_name)
             logger.debug(f"Imported module: {module_name}")
         except Exception as e:
             logger.error(f"Failed to import module '{module_name}': {e}")
-    
+
     # Create the bridge
     bridge = Bridge(
         generate_ts=config.get("generate_ts"),
@@ -112,10 +112,10 @@ def create_app() -> FastAPI:
         title=config.get("title", "PyBridge API"),
         debug=config.get("debug", False),
     )
-    
+
     # Generate TypeScript client
     bridge.generate_typescript_client()
-    
+
     logger.info("Application reloaded")
-    
+
     return bridge.app

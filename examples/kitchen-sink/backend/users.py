@@ -4,8 +4,9 @@ Users Module
 Demonstrates basic CRUD-like commands with Pydantic models.
 """
 
-from typing import List, Optional
+
 from pydantic import BaseModel, Field
+
 from pybridge import command
 
 
@@ -25,9 +26,9 @@ class CreateUserRequest(BaseModel):
 
 class UpdateUserRequest(BaseModel):
     """Request to update an existing user."""
-    name: Optional[str] = None
-    email: Optional[str] = None
-    is_active: Optional[bool] = None
+    name: str | None = None
+    email: str | None = None
+    is_active: bool | None = None
 
 
 # In-memory "database" for demo purposes
@@ -43,7 +44,7 @@ _next_id = 4
 async def get_user(user_id: int) -> User:
     """
     Get a user by ID.
-    
+
     Raises an error if the user doesn't exist.
     """
     if user_id not in _users_db:
@@ -52,10 +53,10 @@ async def get_user(user_id: int) -> User:
 
 
 @command
-async def list_users(active_only: bool = False) -> List[User]:
+async def list_users(active_only: bool = False) -> list[User]:
     """
     List all users.
-    
+
     Optionally filter to only active users.
     """
     users = list(_users_db.values())
@@ -68,47 +69,47 @@ async def list_users(active_only: bool = False) -> List[User]:
 async def create_user(name: str, email: str) -> User:
     """
     Create a new user.
-    
+
     Returns the created user with their assigned ID.
     """
     global _next_id
-    
+
     # Check for duplicate email
     for user in _users_db.values():
         if user.email == email:
             raise ValueError(f"User with email {email} already exists")
-    
+
     user = User(id=_next_id, name=name, email=email)
     _users_db[_next_id] = user
     _next_id += 1
-    
+
     return user
 
 
 @command
 async def update_user(
     user_id: int,
-    name: Optional[str] = None,
-    email: Optional[str] = None,
-    is_active: Optional[bool] = None,
+    name: str | None = None,
+    email: str | None = None,
+    is_active: bool | None = None,
 ) -> User:
     """
     Update an existing user.
-    
+
     Only provided fields will be updated.
     """
     if user_id not in _users_db:
         raise ValueError(f"User with ID {user_id} not found")
-    
+
     user = _users_db[user_id]
-    
+
     if name is not None:
         user = user.model_copy(update={"name": name})
     if email is not None:
         user = user.model_copy(update={"email": email})
     if is_active is not None:
         user = user.model_copy(update={"is_active": is_active})
-    
+
     _users_db[user_id] = user
     return user
 
@@ -117,7 +118,7 @@ async def update_user(
 async def delete_user(user_id: int) -> bool:
     """
     Delete a user.
-    
+
     Returns True if the user was deleted, False if they didn't exist.
     """
     if user_id in _users_db:
@@ -127,10 +128,10 @@ async def delete_user(user_id: int) -> bool:
 
 
 @command
-async def search_users(query: str) -> List[User]:
+async def search_users(query: str) -> list[User]:
     """
     Search for users by name or email.
-    
+
     Returns users whose name or email contains the search query.
     """
     query = query.lower()

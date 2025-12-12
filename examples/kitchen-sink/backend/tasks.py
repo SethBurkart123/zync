@@ -5,9 +5,10 @@ Demonstrates nested models and more complex data structures.
 """
 
 from datetime import datetime
-from typing import List, Optional
 from enum import Enum
+
 from pydantic import BaseModel, Field
+
 from pybridge import command
 
 
@@ -38,13 +39,13 @@ class Task(BaseModel):
     """A task item."""
     id: int
     title: str
-    description: Optional[str] = None
+    description: str | None = None
     priority: TaskPriority = TaskPriority.MEDIUM
     status: TaskStatus = TaskStatus.TODO
-    labels: List[TaskLabel] = Field(default_factory=list)
+    labels: list[TaskLabel] = Field(default_factory=list)
     created_at: str
-    due_date: Optional[str] = None
-    assigned_to: Optional[int] = None  # User ID
+    due_date: str | None = None
+    assigned_to: int | None = None  # User ID
 
 
 class TaskStats(BaseModel):
@@ -120,37 +121,37 @@ async def get_task(task_id: int) -> Task:
 
 @command
 async def list_tasks(
-    status: Optional[str] = None,
-    priority: Optional[str] = None,
-    label_id: Optional[int] = None,
-) -> List[Task]:
+    status: str | None = None,
+    priority: str | None = None,
+    label_id: int | None = None,
+) -> list[Task]:
     """
     List tasks with optional filters.
-    
+
     Can filter by status, priority, or label.
     """
     tasks = list(_tasks_db.values())
-    
+
     if status:
         try:
             status_enum = TaskStatus(status)
             tasks = [t for t in tasks if t.status == status_enum]
         except ValueError:
             pass
-    
+
     if priority:
         try:
             priority_enum = TaskPriority(priority)
             tasks = [t for t in tasks if t.priority == priority_enum]
         except ValueError:
             pass
-    
+
     if label_id:
         tasks = [
             t for t in tasks
-            if any(l.id == label_id for l in t.labels)
+            if any(label.id == label_id for label in t.labels)
         ]
-    
+
     # Sort by priority (urgent first) then by created_at
     priority_order = {
         TaskPriority.URGENT: 0,
@@ -159,32 +160,32 @@ async def list_tasks(
         TaskPriority.LOW: 3,
     }
     tasks.sort(key=lambda t: (priority_order[t.priority], t.created_at))
-    
+
     return tasks
 
 
 @command
 async def create_task(
     title: str,
-    description: Optional[str] = None,
+    description: str | None = None,
     priority: str = "medium",
-    due_date: Optional[str] = None,
-    label_ids: Optional[List[int]] = None,
+    due_date: str | None = None,
+    label_ids: list[int] | None = None,
 ) -> Task:
     """Create a new task."""
     global _next_task_id
-    
+
     # Validate and convert priority
     try:
         priority_enum = TaskPriority(priority)
     except ValueError:
         priority_enum = TaskPriority.MEDIUM
-    
+
     # Get labels
     labels = []
     if label_ids:
         labels = [_labels_db[lid] for lid in label_ids if lid in _labels_db]
-    
+
     task = Task(
         id=_next_task_id,
         title=title,
@@ -195,10 +196,10 @@ async def create_task(
         created_at=datetime.now().isoformat(),
         due_date=due_date,
     )
-    
+
     _tasks_db[_next_task_id] = task
     _next_task_id += 1
-    
+
     return task
 
 
@@ -234,11 +235,11 @@ async def delete_task(task_id: int) -> bool:
 async def get_task_stats() -> TaskStats:
     """Get statistics about all tasks."""
     tasks = list(_tasks_db.values())
-    
+
     by_priority = {p.value: 0 for p in TaskPriority}
     for task in tasks:
         by_priority[task.priority.value] += 1
-    
+
     return TaskStats(
         total=len(tasks),
         todo=sum(1 for t in tasks if t.status == TaskStatus.TODO),
@@ -250,7 +251,7 @@ async def get_task_stats() -> TaskStats:
 
 
 @command
-async def list_labels() -> List[TaskLabel]:
+async def list_labels() -> list[TaskLabel]:
     """Get all available labels."""
     return list(_labels_db.values())
 
@@ -259,9 +260,9 @@ async def list_labels() -> List[TaskLabel]:
 async def create_label(name: str, color: str = "#808080") -> TaskLabel:
     """Create a new label."""
     global _next_label_id
-    
+
     label = TaskLabel(id=_next_label_id, name=name, color=color)
     _labels_db[_next_label_id] = label
     _next_label_id += 1
-    
+
     return label
