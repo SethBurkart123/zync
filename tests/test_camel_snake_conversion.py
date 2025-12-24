@@ -98,9 +98,10 @@ class TestCamelCaseModelParameters:
         assert "baseUrl?: string" in content
         assert "maxRetries?: number" in content
 
-        # Verify the function uses a converter to map camelCase back to snake_case
+        # Verify the function uses inline mapping to convert camelCase back to snake_case
         assert "saveProvider" in content
-        assert "convertProviderSettings(args.settings)" in content
+        # Inline mapping for nested model fields
+        assert "api_key: args.settings.apiKey" in content
 
     def test_command_execution_with_camel_case_input(self, temp_dir):
         """Test that commands execute correctly when receiving snake_case data (after TS conversion)."""
@@ -395,19 +396,18 @@ class TestTypeScriptGenerationFieldMapping:
         assert "maxRetries" in content
 
         # Extract just the interface section to verify no snake_case there
-        # (converter functions intentionally use snake_case for the API)
+        # (inline mappings intentionally use snake_case for the API)
         interface_start = content.find("export interface ProviderSettings {")
         interface_end = content.find("}", interface_start) + 1
         interface_section = content[interface_start:interface_end]
         
-        # Should NOT have snake_case in interface (but converters will have them)
+        # Should NOT have snake_case in interface (but inline mappings will have them)
         assert "api_key:" not in interface_section
         assert "base_url:" not in interface_section
         assert "max_retries:" not in interface_section
         
-        # Verify converter function exists and maps to snake_case
-        assert "convertProviderSettings" in content
-        assert "api_key: obj.apiKey" in content
+        # Verify inline mapping for snake_case field names in the function
+        assert "api_key: args.settings.apiKey" in content
 
     def test_deeply_nested_model_interfaces(self, temp_dir):
         """Verify nested models all generate with camelCase."""

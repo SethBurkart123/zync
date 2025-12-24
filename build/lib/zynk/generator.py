@@ -50,6 +50,12 @@ def python_name_to_pascal_case(name: str) -> str:
     return "".join(x.title() for x in name.split("_"))
 
 
+def needs_snake_case_conversion(field_name: str) -> bool:
+    """Check if a field name needs snake_case to camelCase conversion."""
+    camel = python_name_to_camel_case(field_name)
+    return camel != field_name
+
+
 class TypeScriptGenerator:
     """
     Generates TypeScript client code from Zynk command registry.
@@ -194,41 +200,37 @@ class TypeScriptGenerator:
         lines.append("}")
         return "\n".join(lines)
 
-    def _generate_model_converter(
+    def _generate_inline_field_mapping(
         self,
         model: type[BaseModel],
+        obj_ref: str,
         models_to_generate: set[str],
     ) -> str:
         """
-        Generate a TypeScript converter function for a Pydantic model.
+        Generate inline object mapping for converting camelCase to snake_case.
         
-        The converter maps camelCase TypeScript object keys back to their
-        original snake_case Python field names for API requests.
-
         Args:
-            model: The Pydantic model class.
-            models_to_generate: Set to collect nested model names.
-
+            model: The Pydantic model class
+            obj_ref: The object reference (e.g., "args.body")
+            models_to_generate: Set to collect nested model names
+            
         Returns:
-            TypeScript converter function definition string.
+            TypeScript expression for the mapped object
         """
-        lines = []
-        model_name = model.__name__
-        
-        lines.append(f"function convert{model_name}(obj: {model_name}): Record<string, unknown> {{")
-        lines.append("    return {")
+        # First pass: check if ANY field needs special handling
+        needs_object_literal = False
+        field_mappings = []
         
         for field_name, field_info in model.model_fields.items():
             ts_name = python_name_to_camel_case(field_name)
             annotation = field_info.annotation
             
-            # Check if this field is a nested Pydantic model
+            # Unwrap Optional/Union types
             origin = get_origin(annotation)
             args = get_args(annotation)
-            
-            # Handle Optional/Union types
             actual_type = annotation
             is_optional = False
+            
             if origin is Union or (hasattr(types, 'UnionType') and origin is types.UnionType):
                 non_none_args = [a for a in args if a is not type(None)]
                 if non_none_args:
@@ -238,31 +240,65 @@ class TypeScriptGenerator:
             actual_origin = get_origin(actual_type)
             actual_args = get_args(actual_type)
             
-            # Check if it's a Pydantic model
+            # Check if field name needs conversion
+            name_needs_conversion = ts_name != field_name
+            
+            # Check if it's a nested Pydantic model
             if isinstance(actual_type, type) and issubclass(actual_type, BaseModel):
-                nested_model_name = actual_type.__name__
-                if is_optional:
-                    lines.append(f"        {field_name}: obj.{ts_name} != null ? convert{nested_model_name}(obj.{ts_name}) : obj.{ts_name},")
+                nested_mapping = self._generate_inline_field_mapping(
+                    actual_type, f"{obj_ref}.{ts_name}", models_to_generate
+                )
+                # Only need special handling if nested mapping isn't just the ref
+                if nested_mapping != f"{obj_ref}.{ts_name}" or name_needs_conversion:
+                    needs_object_literal = True
+                    if is_optional:
+                        field_mappings.append(
+                            f"{field_name}: {obj_ref}.{ts_name} != null ? {nested_mapping} : undefined"
+                        )
+                    else:
+                        field_mappings.append(f"{field_name}: {nested_mapping}")
                 else:
-                    lines.append(f"        {field_name}: convert{nested_model_name}(obj.{ts_name}),")
+                    field_mappings.append(f"{field_name}: {obj_ref}.{ts_name}")
+            
             # Check if it's a list of Pydantic models
             elif actual_origin is list and actual_args:
                 item_type = actual_args[0]
                 if isinstance(item_type, type) and issubclass(item_type, BaseModel):
-                    nested_model_name = item_type.__name__
-                    if is_optional:
-                        lines.append(f"        {field_name}: obj.{ts_name} != null ? obj.{ts_name}.map(convert{nested_model_name}) : obj.{ts_name},")
+                    item_mapping = self._generate_inline_field_mapping(
+                        item_type, "item", models_to_generate
+                    )
+                    # Only need special handling if items need conversion
+                    if item_mapping != "item" or name_needs_conversion:
+                        needs_object_literal = True
+                        if is_optional:
+                            field_mappings.append(
+                                f"{field_name}: {obj_ref}.{ts_name} != null ? "
+                                f"{obj_ref}.{ts_name}.map(item => {item_mapping}) : undefined"
+                            )
+                        else:
+                            field_mappings.append(
+                                f"{field_name}: {obj_ref}.{ts_name}.map(item => {item_mapping})"
+                            )
                     else:
-                        lines.append(f"        {field_name}: obj.{ts_name}.map(convert{nested_model_name}),")
+                        field_mappings.append(f"{field_name}: {obj_ref}.{ts_name}")
+                elif name_needs_conversion:
+                    needs_object_literal = True
+                    field_mappings.append(f"{field_name}: {obj_ref}.{ts_name}")
                 else:
-                    lines.append(f"        {field_name}: obj.{ts_name},")
+                    field_mappings.append(f"{field_name}: {obj_ref}.{ts_name}")
+            
+            # Simple field
+            elif name_needs_conversion:
+                needs_object_literal = True
+                field_mappings.append(f"{field_name}: {obj_ref}.{ts_name}")
             else:
-                # Primitive or other type - just map the key
-                lines.append(f"        {field_name}: obj.{ts_name},")
+                field_mappings.append(f"{field_name}: {obj_ref}.{ts_name}")
         
-        lines.append("    };")
-        lines.append("}")
-        return "\n".join(lines)
+        # If no special handling needed, just return the object reference
+        if not needs_object_literal:
+            return obj_ref
+        
+        return "{ " + ", ".join(field_mappings) + " }"
 
     def _generate_command_function(
         self,
@@ -349,19 +385,70 @@ class TypeScriptGenerator:
                 lines.append(f" * {line.strip()}")
             lines.append(" */")
 
-        # Helper to generate mapping expression
-        def get_mapping_expr(camel: str, snake: str, is_optional: bool, model_name: str | None) -> str:
-            if model_name:
+        # Helper to generate parameter mapping expression
+        def get_param_mapping(camel: str, snake: str, is_optional: bool, param_type: Any) -> str:
+            """Generate the mapping expression for a single parameter."""
+            # Unwrap Optional types
+            actual_type = param_type
+            origin = get_origin(param_type)
+            args = get_args(param_type)
+            
+            if origin is Union or (hasattr(types, 'UnionType') and origin is types.UnionType):
+                non_none_args = [a for a in args if a is not type(None)]
+                if non_none_args:
+                    actual_type = non_none_args[0]
+            
+            # If it's a Pydantic model, generate inline mapping
+            if isinstance(actual_type, type) and issubclass(actual_type, BaseModel):
+                inline_mapping = self._generate_inline_field_mapping(
+                    actual_type, f"args.{camel}", models_to_generate
+                )
                 if is_optional:
-                    return f"{snake}: args.{camel} != null ? convert{model_name}(args.{camel}) : args.{camel}"
-                return f"{snake}: convert{model_name}(args.{camel})"
+                    return f"{snake}: args.{camel} != null ? {inline_mapping} : undefined"
+                return f"{snake}: {inline_mapping}"
+            
+            # Simple field - check if names match
+            if camel == snake:
+                return f"{snake}: args.{camel}"
             return f"{snake}: args.{camel}"
+
+        # Build the mappings
+        if cmd.params:
+            mappings = []
+            has_model_params = False
+            
+            for ts_param_name, param_name, is_optional, _ in param_mapping:
+                param_type = cmd.params[param_name]
+                mapping = get_param_mapping(ts_param_name, param_name, is_optional, param_type)
+                mappings.append(mapping)
+                
+                # Check if this param is a Pydantic model (needs internal field mapping)
+                actual_type = param_type
+                origin = get_origin(param_type)
+                args = get_args(param_type)
+                if origin is Union or (hasattr(types, 'UnionType') and origin is types.UnionType):
+                    non_none_args = [a for a in args if a is not type(None)]
+                    if non_none_args:
+                        actual_type = non_none_args[0]
+                if isinstance(actual_type, type) and issubclass(actual_type, BaseModel):
+                    has_model_params = True
+            
+            # Check if we can just pass through args:
+            # Only when all names match AND no Pydantic models (which need internal field conversion)
+            all_names_match = all(
+                ts_name == py_name 
+                for ts_name, py_name, _, _ in param_mapping
+            )
+            
+            if all_names_match and not has_model_params:
+                args_obj = "args"
+            else:
+                args_obj = "{ " + ", ".join(mappings) + " }"
+        else:
+            args_obj = "{}"
 
         if cmd.has_channel:
             if cmd.params:
-                # Build object literal mapping camelCase to snake_case
-                mappings = [get_mapping_expr(camel, snake, opt, model) for camel, snake, opt, model in param_mapping]
-                args_obj = "{ " + ", ".join(mappings) + " }"
                 lines.append(
                     f"export function {fn_name}(args: {params_type}): "
                     f"BridgeChannel<{return_type}> {{"
@@ -375,9 +462,6 @@ class TypeScriptGenerator:
             lines.append("}")
         else:
             if cmd.params:
-                # Build object literal mapping camelCase to snake_case
-                mappings = [get_mapping_expr(camel, snake, opt, model) for camel, snake, opt, model in param_mapping]
-                args_obj = "{ " + ", ".join(mappings) + " }"
                 lines.append(
                     f"export async function {fn_name}(args: {params_type}): "
                     f"Promise<{return_type}> {{"
@@ -465,65 +549,87 @@ export function createChannel<T>(command: string, args: unknown): BridgeChannel<
     const baseUrl = getBaseUrl();
     const url = `${baseUrl}/channel/${command}`;
 
-    let eventSource: EventSource | null = null;
+    let abortController: AbortController | null = new AbortController();
     let messageCallback: ((data: T) => void) | null = null;
     let errorCallback: ((error: BridgeError) => void) | null = null;
     let closeCallback: (() => void) | null = null;
 
-    // Start the SSE connection
-    const startConnection = async () => {
-        // First, initiate the channel via POST
-        const initResponse = await fetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify(args),
-        });
+    const startStream = async () => {
+        try {
+            const response = await fetch(url, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(args),
+                signal: abortController?.signal,
+            });
 
-        if (!initResponse.ok) {
-            const data = await initResponse.json();
-            if (errorCallback) {
-                errorCallback({
-                    code: data.code || "CHANNEL_INIT_ERROR",
-                    message: data.message || "Failed to initialize channel",
+            if (!response.ok) {
+                const data = await response.json();
+                errorCallback?.({
+                    code: data.code || "CHANNEL_ERROR",
+                    message: data.message || "Failed to start channel",
                     details: data.details,
                 });
+                return;
             }
-            return;
+
+            const reader = response.body?.getReader();
+            if (!reader) {
+                errorCallback?.({ code: "NO_STREAM", message: "Response has no body" });
+                return;
+            }
+
+            const decoder = new TextDecoder();
+            let buffer = "";
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const events = buffer.split("\\n\\n");
+                buffer = events.pop() || "";
+
+                for (const eventBlock of events) {
+                    if (!eventBlock.trim()) continue;
+
+                    let eventType = "message";
+                    let eventData = "";
+
+                    for (const line of eventBlock.split("\\n")) {
+                        if (line.startsWith("event: ")) {
+                            eventType = line.slice(7);
+                        } else if (line.startsWith("data: ")) {
+                            eventData = line.slice(6);
+                        }
+                    }
+
+                    if (eventType === "error") {
+                        const parsed = JSON.parse(eventData);
+                        errorCallback?.({
+                            code: "STREAM_ERROR",
+                            message: parsed.error || "Stream error",
+                        });
+                    } else if (eventType === "close") {
+                        closeCallback?.();
+                    } else if (eventData) {
+                        const parsed = JSON.parse(eventData);
+                        messageCallback?.({ event: eventType, ...parsed } as T);
+                    }
+                }
+            }
+
+            closeCallback?.();
+        } catch (err: unknown) {
+            if (err instanceof Error && err.name === "AbortError") return;
+            errorCallback?.({
+                code: "STREAM_ERROR",
+                message: err instanceof Error ? err.message : "Unknown error",
+            });
         }
-
-        const { channelId } = await initResponse.json();
-
-        // Now connect to SSE endpoint
-        eventSource = new EventSource(`${baseUrl}/channel/stream/${channelId}`);
-
-        eventSource.addEventListener("message", (event) => {
-            if (messageCallback) {
-                const data = JSON.parse(event.data);
-                messageCallback(data as T);
-            }
-        });
-
-        eventSource.addEventListener("error", () => {
-            if (errorCallback) {
-                errorCallback({
-                    code: "CHANNEL_ERROR",
-                    message: "Channel connection error",
-                });
-            }
-        });
-
-        eventSource.addEventListener("close", () => {
-            if (closeCallback) {
-                closeCallback();
-            }
-            eventSource?.close();
-        });
     };
 
-    // Start connection immediately
-    startConnection();
+    startStream();
 
     return {
         subscribe(callback: (data: T) => void): void {
@@ -536,10 +642,8 @@ export function createChannel<T>(command: string, args: unknown): BridgeChannel<
             closeCallback = callback;
         },
         close(): void {
-            eventSource?.close();
-            if (closeCallback) {
-                closeCallback();
-            }
+            abortController?.abort();
+            abortController = null;
         },
     };
 }
@@ -605,19 +709,6 @@ export type {{ BridgeChannel, BridgeError }};
         if model_interfaces:
             sections.append("// ============ Interfaces ============\n")
             sections.append("\n\n".join(model_interfaces))
-            sections.append("")
-
-        # Generate converter functions for all models
-        model_converters: list[str] = []
-        for model_name in sorted(generated_models):
-            model = models.get(model_name)
-            if model:
-                converter_code = self._generate_model_converter(model, models_to_generate)
-                model_converters.append(converter_code)
-
-        if model_converters:
-            sections.append("\n// ============ Converters ============\n")
-            sections.append("\n\n".join(model_converters))
             sections.append("")
 
         if command_functions:
