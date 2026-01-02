@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import UsersDemo from './components/UsersDemo';
 import WeatherDemo from './components/WeatherDemo';
 import TasksDemo from './components/TasksDemo';
+import ChatDemo from './components/ChatDemo';
 
-type Tab = 'users' | 'weather' | 'tasks';
+type Tab = 'users' | 'weather' | 'tasks' | 'chat';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('users');
@@ -45,12 +46,22 @@ const App: React.FC = () => {
         >
           ✅ Tasks
         </button>
+        <button
+          style={{
+            ...styles.tab,
+            ...(activeTab === 'chat' ? styles.activeTab : {}),
+          }}
+          onClick={() => setActiveTab('chat')}
+        >
+          💬 Chat
+        </button>
       </nav>
 
       <main style={styles.main}>
         {activeTab === 'users' && <UsersDemo />}
         {activeTab === 'weather' && <WeatherDemo />}
         {activeTab === 'tasks' && <TasksDemo />}
+        {activeTab === 'chat' && <ChatDemo />}
       </main>
 
       <footer style={styles.footer}>

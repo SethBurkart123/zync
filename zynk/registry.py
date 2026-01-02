@@ -1,8 +1,9 @@
 """
 Command Registry Module
 
-Provides the @command decorator and global registry for Zynk commands.
-Commands are registered automatically when decorated, enabling zero-config setup.
+Provides the @command and @message decorators and global registry for Zynk.
+Commands and message handlers are registered automatically when decorated,
+enabling zero-config setup.
 """
 
 from __future__ import annotations
@@ -15,6 +16,8 @@ from functools import wraps
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from pydantic import BaseModel
+
+from .websocket import MessageHandlerInfo, WebSocket, _extract_event_types
 
 
 class CommandInfo:
@@ -48,10 +51,10 @@ class CommandInfo:
 
 class CommandRegistry:
     """
-    Global registry for all Zynk commands.
+    Global registry for all Zynk commands and message handlers.
 
-    Maintains a flat namespace of commands and ensures no duplicates.
-    Collects Pydantic models used in command signatures for TS generation.
+    Maintains a flat namespace of commands/handlers and ensures no duplicates.
+    Collects Pydantic models used in signatures for TS generation.
     """
 
     _instance: CommandRegistry | None = None
@@ -61,6 +64,7 @@ class CommandRegistry:
             cls._instance = super().__new__(cls)
             cls._instance._commands: dict[str, CommandInfo] = {}
             cls._instance._models: dict[str, type[BaseModel]] = {}
+            cls._instance._message_handlers: dict[str, MessageHandlerInfo] = {}
             cls._instance._initialized = True
         return cls._instance
 
@@ -77,6 +81,7 @@ class CommandRegistry:
         if cls._instance is not None:
             cls._instance._commands.clear()
             cls._instance._models.clear()
+            cls._instance._message_handlers.clear()
 
     def register(self, cmd: CommandInfo) -> None:
         """
@@ -110,6 +115,30 @@ class CommandRegistry:
     def get_all_models(self) -> dict[str, type[BaseModel]]:
         """Get all registered Pydantic models."""
         return self._models.copy()
+
+    def register_message_handler(self, handler: MessageHandlerInfo) -> None:
+        """
+        Register a message handler.
+
+        Raises:
+            ValueError: If a handler with the same name already exists.
+        """
+        if handler.name in self._message_handlers:
+            existing = self._message_handlers[handler.name]
+            raise ValueError(
+                f"Message handler name conflict: '{handler.name}' is defined in both "
+                f"'{existing.module}' and '{handler.module}'. "
+                f"Handler names must be unique across all modules."
+            )
+        self._message_handlers[handler.name] = handler
+
+    def get_message_handler(self, name: str) -> MessageHandlerInfo | None:
+        """Get a message handler by name."""
+        return self._message_handlers.get(name)
+
+    def get_all_message_handlers(self) -> dict[str, MessageHandlerInfo]:
+        """Get all registered message handlers."""
+        return self._message_handlers.copy()
 
     def collect_models_from_type(self, type_hint: Any) -> None:
         """
@@ -186,6 +215,7 @@ def command(func: Callable = None, *, name: str | None = None) -> Callable:
                 channel_type = hints.get("channel")
                 if channel_type:
                     from typing import get_args
+
                     channel_args = get_args(channel_type)
                     if channel_args:
                         _registry.collect_models_from_type(channel_args[0])
@@ -238,3 +268,105 @@ def command(func: Callable = None, *, name: str | None = None) -> Callable:
 def get_registry() -> CommandRegistry:
     """Get the global command registry."""
     return _registry
+
+
+def message(func: Callable = None, *, name: str | None = None) -> Callable:
+    """
+    Decorator to register a function as a Zynk WebSocket message handler.
+
+    Usage:
+        class ServerEvents:
+            chat_message: ChatMessage
+            status: StatusUpdate
+
+        class ClientEvents:
+            chat_message: ChatMessage
+            typing: TypingIndicator
+
+        @message
+        async def chat(ws: WebSocket[ServerEvents, ClientEvents]) -> None:
+            @ws.on("chat_message")
+            async def handle_chat(data: ChatMessage):
+                await ws.send("chat_message", data)
+
+            await ws.listen()
+
+        @message(name="custom_name")
+        async def my_handler(ws: WebSocket[ServerEvents, ClientEvents]) -> None:
+            ...
+
+    Args:
+        func: The function to decorate.
+        name: Optional custom handler name (defaults to function name).
+
+    Returns:
+        The decorated function.
+    """
+    def decorator(fn: Callable) -> Callable:
+        handler_name = name or fn.__name__
+
+        try:
+            hints = get_type_hints(fn)
+        except Exception:
+            hints = {}
+
+        # Find the WebSocket parameter and extract its type arguments
+        sig = inspect.signature(fn)
+        server_events: type | None = None
+        client_events: type | None = None
+        ws_param_name: str | None = None
+
+        for param_name, param in sig.parameters.items():
+            param_type = hints.get(param_name)
+            if param_type is not None:
+                origin = get_origin(param_type)
+                # Check if it's WebSocket[ServerEvents, ClientEvents]
+                if origin is WebSocket:
+                    ws_param_name = param_name
+                    args = get_args(param_type)
+                    if len(args) >= 2:
+                        server_events = args[0]
+                        client_events = args[1]
+                    break
+
+        if ws_param_name is None:
+            raise ValueError(
+                f"Message handler '{handler_name}' must have a WebSocket parameter. "
+                f"Example: async def {handler_name}(ws: WebSocket[ServerEvents, ClientEvents])"
+            )
+
+        # Extract event types from the event classes
+        server_event_types = _extract_event_types(server_events)
+        client_event_types = _extract_event_types(client_events)
+
+        # Collect Pydantic models from event types
+        for event_type in server_event_types.values():
+            _registry.collect_models_from_type(event_type)
+        for event_type in client_event_types.values():
+            _registry.collect_models_from_type(event_type)
+
+        module = fn.__module__
+
+        handler_info = MessageHandlerInfo(
+            name=handler_name,
+            func=fn,
+            server_events=server_events,
+            client_events=client_events,
+            server_event_types=server_event_types,
+            client_event_types=client_event_types,
+            docstring=fn.__doc__,
+            module=module,
+        )
+
+        _registry.register_message_handler(handler_info)
+
+        @wraps(fn)
+        async def async_wrapper(*args, **kwargs):
+            return await fn(*args, **kwargs)
+
+        async_wrapper._zynk_message_handler = handler_info
+        return async_wrapper
+
+    if func is not None:
+        return decorator(func)
+    return decorator

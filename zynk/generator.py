@@ -23,6 +23,7 @@ from typing import (
 from pydantic import BaseModel
 
 from .registry import CommandInfo, get_registry
+from .websocket import MessageHandlerInfo
 
 logger = logging.getLogger(__name__)
 
@@ -178,9 +179,9 @@ class TypeScriptGenerator:
             ts_type = self._type_to_ts(field_info.annotation, models_to_generate)
 
             is_optional = (
-                not field_info.is_required() or
-                get_origin(field_info.annotation) is Union and
-                type(None) in get_args(field_info.annotation)
+                not field_info.is_required()
+                or get_origin(field_info.annotation) is Union
+                and type(None) in get_args(field_info.annotation)
             )
 
             optional_mark = "?" if is_optional else ""
@@ -202,38 +203,40 @@ class TypeScriptGenerator:
     ) -> str:
         """
         Generate inline object mapping for converting camelCase to snake_case.
-        
+
         Args:
             model: The Pydantic model class
             obj_ref: The object reference (e.g., "args.body")
             models_to_generate: Set to collect nested model names
-            
+
         Returns:
             TypeScript expression for the mapped object
         """
         needs_object_literal = False
         field_mappings = []
-        
+
         for field_name, field_info in model.model_fields.items():
             ts_name = python_name_to_camel_case(field_name)
             annotation = field_info.annotation
-            
+
             origin = get_origin(annotation)
             args = get_args(annotation)
             actual_type = annotation
             is_optional = False
-            
-            if origin is Union or (hasattr(types, 'UnionType') and origin is types.UnionType):
+
+            if origin is Union or (
+                hasattr(types, "UnionType") and origin is types.UnionType
+            ):
                 non_none_args = [a for a in args if a is not type(None)]
                 if non_none_args:
                     actual_type = non_none_args[0]
                     is_optional = type(None) in args
-            
+
             actual_origin = get_origin(actual_type)
             actual_args = get_args(actual_type)
-            
+
             name_needs_conversion = ts_name != field_name
-            
+
             if isinstance(actual_type, type) and issubclass(actual_type, BaseModel):
                 nested_mapping = self._generate_inline_field_mapping(
                     actual_type, f"{obj_ref}.{ts_name}", models_to_generate
@@ -248,7 +251,7 @@ class TypeScriptGenerator:
                         field_mappings.append(f"{field_name}: {nested_mapping}")
                 else:
                     field_mappings.append(f"{field_name}: {obj_ref}.{ts_name}")
-            
+
             elif actual_origin is list and actual_args:
                 item_type = actual_args[0]
                 if isinstance(item_type, type) and issubclass(item_type, BaseModel):
@@ -260,11 +263,11 @@ class TypeScriptGenerator:
                         if is_optional:
                             field_mappings.append(
                                 f"{field_name}: {obj_ref}.{ts_name} != null ? "
-                                f"{obj_ref}.{ts_name}.map(item => {item_mapping}) : undefined"
+                                f"{obj_ref}.{ts_name}.map(item => ({item_mapping})) : undefined"
                             )
                         else:
                             field_mappings.append(
-                                f"{field_name}: {obj_ref}.{ts_name}.map(item => {item_mapping})"
+                                f"{field_name}: {obj_ref}.{ts_name}.map(item => ({item_mapping}))"
                             )
                     else:
                         field_mappings.append(f"{field_name}: {obj_ref}.{ts_name}")
@@ -273,16 +276,113 @@ class TypeScriptGenerator:
                     field_mappings.append(f"{field_name}: {obj_ref}.{ts_name}")
                 else:
                     field_mappings.append(f"{field_name}: {obj_ref}.{ts_name}")
-            
+
             elif name_needs_conversion:
                 needs_object_literal = True
                 field_mappings.append(f"{field_name}: {obj_ref}.{ts_name}")
             else:
                 field_mappings.append(f"{field_name}: {obj_ref}.{ts_name}")
-        
+
         if not needs_object_literal:
             return obj_ref
-        
+
+        return "{ " + ", ".join(field_mappings) + " }"
+
+    def _generate_response_field_mapping(
+        self,
+        model: type[BaseModel],
+        obj_ref: str,
+        models_to_generate: set[str],
+    ) -> str:
+        """
+        Generate inline object mapping for converting snake_case response to camelCase.
+
+        This is the reverse of _generate_inline_field_mapping - used for response data
+        coming FROM the server (snake_case) TO TypeScript (camelCase).
+
+        Args:
+            model: The Pydantic model class
+            obj_ref: The object reference (e.g., "_r" for response)
+            models_to_generate: Set to collect nested model names
+
+        Returns:
+            TypeScript expression for the mapped object
+        """
+        needs_object_literal = False
+        field_mappings = []
+
+        for field_name, field_info in model.model_fields.items():
+            ts_name = python_name_to_camel_case(field_name)
+            annotation = field_info.annotation
+
+            origin = get_origin(annotation)
+            args = get_args(annotation)
+            actual_type = annotation
+            is_optional = False
+
+            if origin is Union or (
+                hasattr(types, "UnionType") and origin is types.UnionType
+            ):
+                non_none_args = [a for a in args if a is not type(None)]
+                if non_none_args:
+                    actual_type = non_none_args[0]
+                    is_optional = type(None) in args
+
+            actual_origin = get_origin(actual_type)
+            actual_args = get_args(actual_type)
+
+            name_needs_conversion = ts_name != field_name
+
+            # For responses: { camelCase: response.snake_case }
+            if isinstance(actual_type, type) and issubclass(actual_type, BaseModel):
+                nested_mapping = self._generate_response_field_mapping(
+                    actual_type, f"{obj_ref}.{field_name}", models_to_generate
+                )
+                if nested_mapping != f"{obj_ref}.{field_name}" or name_needs_conversion:
+                    needs_object_literal = True
+                    if is_optional:
+                        field_mappings.append(
+                            f"{ts_name}: {obj_ref}.{field_name} != null ? {nested_mapping} : undefined"
+                        )
+                    else:
+                        field_mappings.append(f"{ts_name}: {nested_mapping}")
+                else:
+                    field_mappings.append(f"{ts_name}: {obj_ref}.{field_name}")
+
+            elif actual_origin is list and actual_args:
+                item_type = actual_args[0]
+                if isinstance(item_type, type) and issubclass(item_type, BaseModel):
+                    item_mapping = self._generate_response_field_mapping(
+                        item_type, "item", models_to_generate
+                    )
+                    if item_mapping != "item" or name_needs_conversion:
+                        needs_object_literal = True
+                        if is_optional:
+                            field_mappings.append(
+                                f"{ts_name}: {obj_ref}.{field_name} != null ? "
+                                f"{obj_ref}.{field_name}.map((item: unknown) => ({item_mapping})) : undefined"
+                            )
+                        else:
+                            field_mappings.append(
+                                f"{ts_name}: {obj_ref}.{field_name}.map((item: unknown) => ({item_mapping}))"
+                            )
+                    else:
+                        field_mappings.append(f"{ts_name}: {obj_ref}.{field_name}")
+                elif name_needs_conversion:
+                    needs_object_literal = True
+                    field_mappings.append(f"{ts_name}: {obj_ref}.{field_name}")
+                else:
+                    field_mappings.append(f"{ts_name}: {obj_ref}.{field_name}")
+
+            elif name_needs_conversion:
+                needs_object_literal = True
+                field_mappings.append(f"{ts_name}: {obj_ref}.{field_name}")
+            else:
+                field_mappings.append(f"{ts_name}: {obj_ref}.{field_name}")
+
+        if not needs_object_literal:
+            return obj_ref
+
         return "{ " + ", ".join(field_mappings) + " }"
 
     def _generate_command_function(
@@ -317,19 +417,21 @@ class TypeScriptGenerator:
                 ts_param_name = python_name_to_camel_case(param_name)
                 ts_type = self._type_to_ts(param_type, models_to_generate)
                 is_optional = param_name in cmd.optional_params
-                
+
                 # Check if this param is a Pydantic model (needs converter)
                 model_name = None
                 actual_type = param_type
                 origin = get_origin(param_type)
                 args = get_args(param_type)
-                
+
                 # Handle Optional/Union types
-                if origin is Union or (hasattr(types, 'UnionType') and origin is types.UnionType):
+                if origin is Union or (
+                    hasattr(types, "UnionType") and origin is types.UnionType
+                ):
                     non_none_args = [a for a in args if a is not type(None)]
                     if non_none_args:
                         actual_type = non_none_args[0]
-                
+
                 if isinstance(actual_type, type) and issubclass(actual_type, BaseModel):
                     model_name = actual_type.__name__
 
@@ -339,7 +441,9 @@ class TypeScriptGenerator:
                     optional_fields.append(f"{ts_param_name}?: {clean_type}")
                 else:
                     required_fields.append(f"{ts_param_name}: {ts_type}")
-                param_mapping.append((ts_param_name, param_name, is_optional, model_name))
+                param_mapping.append(
+                    (ts_param_name, param_name, is_optional, model_name)
+                )
 
             # Put required fields first, then optional fields
             param_fields = required_fields + optional_fields
@@ -370,17 +474,21 @@ class TypeScriptGenerator:
                 lines.append(f" * {line.strip()}")
             lines.append(" */")
 
-        def get_param_mapping(camel: str, snake: str, is_optional: bool, param_type: Any) -> str:
+        def get_param_mapping(
+            camel: str, snake: str, is_optional: bool, param_type: Any
+        ) -> str:
             """Generate the mapping expression for a single parameter."""
             actual_type = param_type
             origin = get_origin(param_type)
             args = get_args(param_type)
-            
-            if origin is Union or (hasattr(types, 'UnionType') and origin is types.UnionType):
+
+            if origin is Union or (
+                hasattr(types, "UnionType") and origin is types.UnionType
+            ):
                 non_none_args = [a for a in args if a is not type(None)]
                 if non_none_args:
                     actual_type = non_none_args[0]
-            
+
             if isinstance(actual_type, type) and issubclass(actual_type, BaseModel):
                 inline_mapping = self._generate_inline_field_mapping(
                     actual_type, f"args.{camel}", models_to_generate
@@ -388,39 +496,72 @@ class TypeScriptGenerator:
                 if is_optional:
                     return f"{snake}: args.{camel} != null ? {inline_mapping} : undefined"
                 return f"{snake}: {inline_mapping}"
-            
+
             return f"{snake}: args.{camel}"
 
         if cmd.params:
             mappings = []
             has_model_params = False
-            
+
             for ts_param_name, param_name, is_optional, _ in param_mapping:
                 param_type = cmd.params[param_name]
-                mapping = get_param_mapping(ts_param_name, param_name, is_optional, param_type)
+                mapping = get_param_mapping(
+                    ts_param_name, param_name, is_optional, param_type
+                )
                 mappings.append(mapping)
-                
+
                 actual_type = param_type
                 origin = get_origin(param_type)
                 args = get_args(param_type)
-                if origin is Union or (hasattr(types, 'UnionType') and origin is types.UnionType):
+                if origin is Union or (
+                    hasattr(types, "UnionType") and origin is types.UnionType
+                ):
                     non_none_args = [a for a in args if a is not type(None)]
                     if non_none_args:
                         actual_type = non_none_args[0]
                 if isinstance(actual_type, type) and issubclass(actual_type, BaseModel):
                     has_model_params = True
-            
+
             all_names_match = all(
-                ts_name == py_name 
-                for ts_name, py_name, _, _ in param_mapping
+                ts_name == py_name for ts_name, py_name, _, _ in param_mapping
             )
-            
+
             if all_names_match and not has_model_params:
                 args_obj = "args"
             else:
                 args_obj = "{ " + ", ".join(mappings) + " }"
         else:
             args_obj = "{}"
+
+        # Check if return type needs response mapping
+        actual_return_type = cmd.return_type
+        return_origin = get_origin(actual_return_type) if actual_return_type else None
+        return_args = get_args(actual_return_type) if actual_return_type else ()
+
+        # Handle Optional return types
+        if return_origin is Union or (
+            hasattr(types, "UnionType") and return_origin is types.UnionType
+        ):
+            non_none_args = [a for a in return_args if a is not type(None)]
+            if non_none_args:
+                actual_return_type = non_none_args[0]
+                return_origin = get_origin(actual_return_type)
+                return_args = get_args(actual_return_type)
+
+        # Determine if we need response mapping
+        needs_response_mapping = False
+        is_list_return = False
+        return_model = None
+
+        if return_origin is list and return_args:
+            item_type = return_args[0]
+            if isinstance(item_type, type) and issubclass(item_type, BaseModel):
+                needs_response_mapping = True
+                is_list_return = True
+                return_model = item_type
+        elif isinstance(actual_return_type, type) and issubclass(actual_return_type, BaseModel):
+            needs_response_mapping = True
+            return_model = actual_return_type
 
         if cmd.has_channel:
             if cmd.params:
@@ -441,19 +582,259 @@ class TypeScriptGenerator:
                     f"export async function {fn_name}(args: {params_type}): "
                     f"Promise<{return_type}> {{"
                 )
-                lines.append(f'    return request("{cmd.name}", {args_obj});')
             else:
                 lines.append(
                     f"export async function {fn_name}(): Promise<{return_type}> {{"
                 )
-                lines.append(f'    return request("{cmd.name}", {{}});')
+
+            if needs_response_mapping and return_model:
+                response_mapping = self._generate_response_field_mapping(
+                    return_model, "_r", models_to_generate
+                )
+                if response_mapping != "_r":
+                    lines.append(f'    const _r = await request("{cmd.name}", {args_obj});')
+                    if is_list_return:
+                        lines.append(f"    return _r.map((_r: unknown) => ({response_mapping}));")
+                    else:
+                        lines.append(f"    return {response_mapping};")
+                else:
+                    lines.append(f'    return request("{cmd.name}", {args_obj});')
+            else:
+                lines.append(f'    return request("{cmd.name}", {args_obj});')
             lines.append("}")
+
+        return "\n".join(lines)
+
+    def _generate_websocket_class(
+        self,
+        handler: MessageHandlerInfo,
+        models_to_generate: set[str],
+    ) -> str:
+        """
+        Generate TypeScript WebSocket class for a message handler.
+
+        Args:
+            handler: The message handler info.
+            models_to_generate: Set to collect model names.
+
+        Returns:
+            TypeScript class definition string.
+        """
+        lines = []
+
+        # Class name in PascalCase + "Socket"
+        class_name = python_name_to_pascal_case(handler.name) + "Socket"
+
+        # Generate event type interfaces
+        server_events_name = f"{python_name_to_pascal_case(handler.name)}ServerEvents"
+        client_events_name = f"{python_name_to_pascal_case(handler.name)}ClientEvents"
+
+        server_event_entries = []
+        for event_name, event_type in handler.server_event_types.items():
+            ts_type = self._type_to_ts(event_type, models_to_generate)
+            server_event_entries.append(f"    {event_name}: {ts_type};")
+
+        client_event_entries = []
+        for event_name, event_type in handler.client_event_types.items():
+            ts_type = self._type_to_ts(event_type, models_to_generate)
+            client_event_entries.append(f"    {event_name}: {ts_type};")
+
+        # Generate event interfaces
+        lines.append(f"export interface {server_events_name} {{")
+        lines.extend(server_event_entries)
+        lines.append("}")
+        lines.append("")
+
+        lines.append(f"export interface {client_events_name} {{")
+        lines.extend(client_event_entries)
+        lines.append("}")
+        lines.append("")
+
+        # Generate class docstring
+        if handler.docstring:
+            lines.append("/**")
+            for line in handler.docstring.strip().split("\n"):
+                lines.append(f" * {line.strip()}")
+            lines.append(" */")
+
+        # Generate the WebSocket class
+        lines.append(f"export class {class_name} {{")
+        lines.append("    private ws: WebSocket | null = null;")
+        lines.append(
+            "    private listeners: Map<string, Set<(data: unknown) => void>> = new Map();"
+        )
+        lines.append("    private connectionListeners: Set<() => void> = new Set();")
+        lines.append(
+            "    private disconnectionListeners: Set<(event: CloseEvent) => void> = new Set();"
+        )
+        lines.append(
+            "    private errorListeners: Set<(error: Event) => void> = new Set();"
+        )
+        lines.append("")
+
+        # connect() method
+        lines.append("    connect(): void {")
+        lines.append("        const baseUrl = getBaseUrl().replace(/^http/, 'ws');")
+        lines.append(
+            f"        this.ws = new WebSocket(`${{baseUrl}}/ws/{handler.name}`);"
+        )
+        lines.append("")
+        lines.append("        this.ws.onopen = () => {")
+        lines.append("            this.connectionListeners.forEach(cb => cb());")
+        lines.append("        };")
+        lines.append("")
+        lines.append("        this.ws.onclose = (event) => {")
+        lines.append(
+            "            this.disconnectionListeners.forEach(cb => cb(event));"
+        )
+        lines.append("        };")
+        lines.append("")
+        lines.append("        this.ws.onerror = (error) => {")
+        lines.append("            this.errorListeners.forEach(cb => cb(error));")
+        lines.append("        };")
+        lines.append("")
+        lines.append("        this.ws.onmessage = (event) => {")
+        lines.append("            try {")
+        lines.append("                const message = JSON.parse(event.data);")
+        lines.append("                const eventName = message.event;")
+        lines.append("                const data = message.data;")
+        lines.append("                const callbacks = this.listeners.get(eventName);")
+        lines.append("                if (callbacks) {")
+        lines.append("                    callbacks.forEach(cb => cb(data));")
+        lines.append("                }")
+        lines.append("            } catch (e) {")
+        lines.append(
+            "                console.error('[Zynk] Failed to parse WebSocket message:', e);"
+        )
+        lines.append("            }")
+        lines.append("        };")
+        lines.append("    }")
+        lines.append("")
+
+        # disconnect() method
+        lines.append("    disconnect(): void {")
+        lines.append("        this.ws?.close();")
+        lines.append("        this.ws = null;")
+        lines.append("    }")
+        lines.append("")
+
+        # isConnected getter
+        lines.append("    get isConnected(): boolean {")
+        lines.append("        return this.ws?.readyState === WebSocket.OPEN;")
+        lines.append("    }")
+        lines.append("")
+
+        # Generic send method
+        lines.append(f"    send<K extends keyof {client_events_name}>(")
+        lines.append("        event: K,")
+        lines.append(f"        data: {client_events_name}[K]")
+        lines.append("    ): void {")
+        lines.append("        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {")
+        lines.append(
+            "            throw new Error('[Zynk] WebSocket is not connected');"
+        )
+        lines.append("        }")
+        lines.append("        this.ws.send(JSON.stringify({ event, data }));")
+        lines.append("    }")
+        lines.append("")
+
+        # Generic on method
+        lines.append(f"    on<K extends keyof {server_events_name}>(")
+        lines.append("        event: K,")
+        lines.append(f"        callback: (data: {server_events_name}[K]) => void")
+        lines.append("    ): () => void {")
+        lines.append("        const eventStr = event as string;")
+        lines.append("        if (!this.listeners.has(eventStr)) {")
+        lines.append("            this.listeners.set(eventStr, new Set());")
+        lines.append("        }")
+        lines.append("        const cb = callback as (data: unknown) => void;")
+        lines.append("        this.listeners.get(eventStr)!.add(cb);")
+        lines.append("        return () => {")
+        lines.append("            this.listeners.get(eventStr)?.delete(cb);")
+        lines.append("        };")
+        lines.append("    }")
+        lines.append("")
+
+        # onConnect method
+        lines.append("    onConnect(callback: () => void): () => void {")
+        lines.append("        this.connectionListeners.add(callback);")
+        lines.append("        return () => {")
+        lines.append("            this.connectionListeners.delete(callback);")
+        lines.append("        };")
+        lines.append("    }")
+        lines.append("")
+
+        # onDisconnect method
+        lines.append(
+            "    onDisconnect(callback: (event: CloseEvent) => void): () => void {"
+        )
+        lines.append("        this.disconnectionListeners.add(callback);")
+        lines.append("        return () => {")
+        lines.append("            this.disconnectionListeners.delete(callback);")
+        lines.append("        };")
+        lines.append("    }")
+        lines.append("")
+
+        # onError method
+        lines.append("    onError(callback: (error: Event) => void): () => void {")
+        lines.append("        this.errorListeners.add(callback);")
+        lines.append("        return () => {")
+        lines.append("            this.errorListeners.delete(callback);")
+        lines.append("        };")
+        lines.append("    }")
+
+        for event_name, event_type in handler.server_event_types.items():
+            ts_type = self._type_to_ts(event_type, models_to_generate)
+            method_name = f"on{python_name_to_pascal_case(event_name)}"
+
+            lines.append("")
+            lines.append(
+                f"    {method_name}(callback: (data: {ts_type}) => void): () => void {{"
+            )
+            if isinstance(event_type, type) and issubclass(event_type, BaseModel):
+                response_mapping = self._generate_response_field_mapping(
+                    event_type, "_d", models_to_generate
+                )
+                if response_mapping != "_d":
+                    lines.append(f'        return this.on("{event_name}", (_d) => callback({response_mapping}));')
+                else:
+                    lines.append(f'        return this.on("{event_name}", callback);')
+            else:
+                lines.append(f'        return this.on("{event_name}", callback);')
+            lines.append("    }")
+
+        for event_name, event_type in handler.client_event_types.items():
+            ts_type = self._type_to_ts(event_type, models_to_generate)
+            method_name = f"send{python_name_to_pascal_case(event_name)}"
+
+            lines.append("")
+            lines.append(f"    {method_name}(data: {ts_type}): void {{")
+            if isinstance(event_type, type) and issubclass(event_type, BaseModel):
+                input_mapping = self._generate_inline_field_mapping(
+                    event_type, "data", models_to_generate
+                )
+                if input_mapping != "data":
+                    lines.append(f'        this.send("{event_name}", {input_mapping} as {ts_type});')
+                else:
+                    lines.append(f'        this.send("{event_name}", data);')
+            else:
+                lines.append(f'        this.send("{event_name}", data);')
+            lines.append("    }")
+
+        lines.append("}")
+        lines.append("")
+
+        # Factory function
+        fn_name = f"create{python_name_to_pascal_case(handler.name)}Socket"
+        lines.append(f"export function {fn_name}(): {class_name} {{")
+        lines.append(f"    return new {class_name}();")
+        lines.append("}")
 
         return "\n".join(lines)
 
     def _generate_internal_module(self) -> str:
         """Generate the internal bridge utilities module."""
-        return '''// Internal bridge utilities - do not modify
+        return """// Internal bridge utilities - do not modify
 let _baseUrl: string | null = null;
 
 export interface BridgeError {
@@ -622,7 +1003,7 @@ export function createChannel<T>(command: string, args: unknown): BridgeChannel<
         },
     };
 }
-'''
+"""
 
     def generate(self, output_path: str) -> None:
         """
@@ -634,9 +1015,12 @@ export function createChannel<T>(command: string, args: unknown): BridgeChannel<
         registry = get_registry()
         commands = registry.get_all_commands()
         models = registry.get_all_models()
+        message_handlers = registry.get_all_message_handlers()
 
-        if not commands:
-            logger.warning("No commands registered. Generating empty client.")
+        if not commands and not message_handlers:
+            logger.warning(
+                "No commands or message handlers registered. Generating empty client."
+            )
 
         output_path = Path(output_path)
         output_dir = output_path.parent
@@ -654,7 +1038,7 @@ export function createChannel<T>(command: string, args: unknown): BridgeChannel<
         sections.append(f"""/* Auto-generated by Zynk - DO NOT EDIT */
 /* Generated: {datetime.now().isoformat()} */
 
-import {{ initBridge, request, createChannel, BridgeRequestError }} from "./_internal";
+import {{ initBridge, request, createChannel, getBaseUrl, BridgeRequestError }} from "./_internal";
 import type {{ BridgeChannel, BridgeError }} from "./_internal";
 
 export {{ initBridge, BridgeRequestError }};
@@ -677,7 +1061,9 @@ export type {{ BridgeChannel, BridgeError }};
             for model_name in sorted(current_batch):
                 model = models.get(model_name)
                 if model:
-                    interface_code = self._generate_model_interface(model, models_to_generate)
+                    interface_code = self._generate_model_interface(
+                        model, models_to_generate
+                    )
                     model_interfaces.append(interface_code)
                 generated_models.add(model_name)
 
@@ -690,13 +1076,35 @@ export type {{ BridgeChannel, BridgeError }};
             sections.append("\n// ============ Commands ============\n")
             sections.append("\n\n".join(command_functions))
 
+        # Generate WebSocket classes for message handlers
+        websocket_classes: list[str] = []
+        for handler in sorted(message_handlers.values(), key=lambda h: h.name):
+            ws_code = self._generate_websocket_class(handler, models_to_generate)
+            websocket_classes.append(ws_code)
+
+        # Re-generate models in case WebSocket handlers added new ones
+        while models_to_generate - generated_models:
+            current_batch = models_to_generate - generated_models
+            for model_name in sorted(current_batch):
+                model = models.get(model_name)
+                if model:
+                    interface_code = self._generate_model_interface(
+                        model, models_to_generate
+                    )
+                    model_interfaces.append(interface_code)
+                generated_models.add(model_name)
+
+        if websocket_classes:
+            sections.append("\n// ============ WebSockets ============\n")
+            sections.append("\n\n".join(websocket_classes))
+
         content = "\n".join(sections)
         with open(output_path, "w") as f:
             f.write(content)
 
         logger.debug(
             f"Generated TypeScript client: {output_path} "
-            f"({len(commands)} commands, {len(generated_models)} interfaces)"
+            f"({len(commands)} commands, {len(message_handlers)} websockets, {len(generated_models)} interfaces)"
         )
 
 

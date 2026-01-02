@@ -35,6 +35,28 @@ For streaming support:
         for i in range(10):
             await channel.send({"value": i})
             await asyncio.sleep(0.1)
+
+For WebSocket bidirectional communication:
+
+    from zynk import message, WebSocket
+    from pydantic import BaseModel
+
+    class ChatMessage(BaseModel):
+        text: str
+
+    class ServerEvents:
+        chat_message: ChatMessage
+
+    class ClientEvents:
+        chat_message: ChatMessage
+
+    @message
+    async def chat(ws: WebSocket[ServerEvents, ClientEvents]) -> None:
+        @ws.on("chat_message")
+        async def on_message(data: ChatMessage):
+            await ws.send("chat_message", data)
+
+        await ws.listen()
 """
 
 __version__ = "0.1.3"
@@ -49,34 +71,36 @@ from .errors import (
     CommandExecutionError,
     CommandNotFoundError,
     InternalError,
+    MessageHandlerNotFoundError,
     ValidationError,
+    WebSocketError,
 )
 from .generator import generate_typescript
-from .registry import CommandInfo, CommandRegistry, command, get_registry
+from .registry import CommandInfo, CommandRegistry, command, get_registry, message
 from .runner import run
+from .websocket import WebSocket, MessageHandlerInfo
 
 __all__ = [
     # Version
     "__version__",
-
     # Core
     "Bridge",
     "command",
+    "message",
     "run",
-
     # Streaming
     "Channel",
     "ChannelManager",
     "channel_manager",
-
+    # WebSocket
+    "WebSocket",
+    "MessageHandlerInfo",
     # Registry
     "get_registry",
     "CommandRegistry",
     "CommandInfo",
-
     # TypeScript generation
     "generate_typescript",
-
     # Errors
     "BridgeError",
     "ValidationError",
@@ -84,4 +108,6 @@ __all__ = [
     "CommandExecutionError",
     "ChannelError",
     "InternalError",
+    "WebSocketError",
+    "MessageHandlerNotFoundError",
 ]

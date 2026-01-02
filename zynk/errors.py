@@ -87,6 +87,28 @@ class InternalError(BridgeError):
         super().__init__("INTERNAL_ERROR", message)
 
 
+class WebSocketError(BridgeError):
+    """Raised when a WebSocket operation fails."""
+
+    def __init__(self, message: str, handler_name: str | None = None):
+        super().__init__(
+            "WEBSOCKET_ERROR",
+            message,
+            {"handler": handler_name} if handler_name else None,
+        )
+
+
+class MessageHandlerNotFoundError(BridgeError):
+    """Raised when a requested message handler doesn't exist."""
+
+    def __init__(self, handler_name: str):
+        super().__init__(
+            "HANDLER_NOT_FOUND",
+            f"Message handler '{handler_name}' not found",
+            {"handler": handler_name},
+        )
+
+
 # Response models for API
 
 class ErrorResponse(BaseModel):

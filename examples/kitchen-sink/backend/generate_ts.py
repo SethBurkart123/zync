@@ -10,6 +10,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Import the command modules to register their commands
+import chat
 import tasks
 import users
 import weather

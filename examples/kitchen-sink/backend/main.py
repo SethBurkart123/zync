@@ -4,7 +4,8 @@ Kitchen Sink Example - Main Entry Point
 Demonstrates Zynk setup with multiple command modules.
 """
 
-# Import modules to register their commands (side-effect imports)
+# Import modules to register their commands and handlers (side-effect imports)
+import chat
 import tasks
 import users
 import weather

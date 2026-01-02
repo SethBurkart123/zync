@@ -13,6 +13,7 @@ import types
 from typing import Any, Union, get_args, get_origin
 
 from fastapi import FastAPI, Request
+from fastapi import WebSocket as FastAPIWebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
@@ -27,10 +28,13 @@ from .errors import (
     CommandExecutionError,
     CommandNotFoundError,
     InternalError,
+    MessageHandlerNotFoundError,
     ValidationError,
+    WebSocketError,
 )
 from .generator import generate_typescript
 from .registry import CommandInfo, get_registry
+from .websocket import WebSocket, MessageHandlerInfo
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +58,7 @@ def instantiate_model(data: Any, type_hint: Any) -> Any:
     args = get_args(type_hint) if type_hint else ()
 
     # Handle Union types (Optional, T | None, etc.)
-    if origin is Union or (hasattr(types, 'UnionType') and origin is types.UnionType):
+    if origin is Union or (hasattr(types, "UnionType") and origin is types.UnionType):
         non_none_args = [a for a in args if a is not type(None)]
         if non_none_args:
             return instantiate_model(data, non_none_args[0])
@@ -66,7 +70,11 @@ def instantiate_model(data: Any, type_hint: Any) -> Any:
 
     # Handle dicts that should become Pydantic models
     if isinstance(data, dict):
-        if type_hint and isinstance(type_hint, type) and issubclass(type_hint, BaseModel):
+        if (
+            type_hint
+            and isinstance(type_hint, type)
+            and issubclass(type_hint, BaseModel)
+        ):
             # Recursively instantiate nested models first
             model_fields = type_hint.model_fields
             converted = {}
@@ -261,6 +269,31 @@ class Bridge:
                 },
             )
 
+        @self.app.websocket("/ws/{handler_name}")
+        async def websocket_endpoint(websocket: FastAPIWebSocket, handler_name: str):
+            """WebSocket endpoint for message handlers."""
+            registry = get_registry()
+            handler = registry.get_message_handler(handler_name)
+
+            if not handler:
+                await websocket.close(
+                    code=4004, reason=f"Handler '{handler_name}' not found"
+                )
+                return
+
+            ws = WebSocket(
+                websocket=websocket,
+                server_events=handler.server_events,
+                client_events=handler.client_events,
+            )
+
+            try:
+                await ws.accept()
+                await handler.func(ws)
+            except Exception as e:
+                logger.exception(f"WebSocket handler '{handler_name}' failed")
+                await ws.close(code=1011, reason=str(e))
+
     def _setup_error_handlers(self) -> None:
         """Setup exception handlers."""
 
@@ -278,7 +311,9 @@ class Bridge:
             )
 
         @self.app.exception_handler(PydanticValidationError)
-        async def validation_error_handler(request: Request, exc: PydanticValidationError):
+        async def validation_error_handler(
+            request: Request, exc: PydanticValidationError
+        ):
             return JSONResponse(
                 status_code=400,
                 content={
@@ -396,12 +431,15 @@ class Bridge:
 
         registry = get_registry()
         commands = registry.get_all_commands()
+        message_handlers = registry.get_all_message_handlers()
 
         mode = "Development" if dev else "Production"
 
         content = f"""Server:     http://{self.host}:{self.port}
 Mode:       {mode}
 Commands:   {len(commands)}"""
+        if message_handlers:
+            content += f"\nWebSockets: {len(message_handlers)}"
         if self.generate_ts:
             content += f"\nTypeScript: {self.generate_ts}"
 
@@ -416,6 +454,10 @@ Commands:   {len(commands)}"""
             for cmd in commands.values():
                 channel_marker = " [channel]" if cmd.has_channel else ""
                 logger.debug(f"  - {cmd.name}{channel_marker} ({cmd.module})")
+            if message_handlers:
+                logger.debug("Registered message handlers:")
+                for handler in message_handlers.values():
+                    logger.debug(f"  - /ws/{handler.name} ({handler.module})")
 
         if dev:
             command_modules = set()
@@ -423,8 +465,13 @@ Commands:   {len(commands)}"""
                 module_name = cmd.module
                 if not module_name.startswith("zynk"):
                     command_modules.add(module_name)
+            for handler in message_handlers.values():
+                module_name = handler.module
+                if not module_name.startswith("zynk"):
+                    command_modules.add(module_name)
 
             from . import server
+
             server.set_config(
                 generate_ts=self.generate_ts,
                 host=self.host,
