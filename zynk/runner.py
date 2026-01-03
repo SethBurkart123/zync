@@ -25,6 +25,7 @@ def run(
     debug: bool = False,
     dev: bool = False,
     reload_dirs: list[str] | None = None,
+    reload_includes: list[str] | None = None,
     reload_excludes: list[str] | None = None,
     import_modules: list[str] | None = None,
 ) -> None:
@@ -43,6 +44,7 @@ def run(
         debug: Enable debug logging.
         dev: Enable development mode with hot-reloading.
         reload_dirs: Directories to watch for changes (dev mode only).
+        reload_includes: Glob patterns to include in file watching (dev mode only).
         reload_excludes: Glob patterns to exclude from file watching (dev mode only).
                         Defaults to [".git", "__pycache__", "node_modules", ".venv"].
         import_modules: List of module names containing commands to import.
@@ -136,16 +138,20 @@ Commands:   {len(commands)}"""
             ".venv",
         ]
 
-        uvicorn.run(
-            "zynk.server:create_app",
-            host=host,
-            port=port,
-            reload=True,
-            reload_dirs=watch_dirs,
-            reload_excludes=exclude_patterns,
-            factory=True,
-            log_level="debug" if debug else "info",
-        )
+        uvicorn_kwargs = {
+            "app": "zynk.server:create_app",
+            "host": host,
+            "port": port,
+            "reload": True,
+            "reload_dirs": watch_dirs,
+            "reload_excludes": exclude_patterns,
+            "factory": True,
+            "log_level": "debug" if debug else "info",
+        }
+        if reload_includes is not None:
+            uvicorn_kwargs["reload_includes"] = reload_includes
+
+        uvicorn.run(**uvicorn_kwargs)
     else:
         bridge = Bridge(
             generate_ts=generate_ts,

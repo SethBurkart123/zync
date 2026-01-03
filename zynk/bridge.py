@@ -144,6 +144,8 @@ class Bridge:
         cors_origins: list[str] | None = None,
         title: str = "Zynk API",
         debug: bool = False,
+        reload_includes: list[str] | None = None,
+        reload_excludes: list[str] | None = None,
     ):
         """
         Initialize the Bridge.
@@ -156,6 +158,8 @@ class Bridge:
             cors_origins: List of allowed CORS origins. Defaults to ["*"].
             title: API title for documentation.
             debug: Enable debug logging.
+            reload_includes: Glob patterns to include in file watching (dev mode only).
+            reload_excludes: Glob patterns to exclude from file watching (dev mode only).
         """
         self.generate_ts = generate_ts
         self.host = host
@@ -163,6 +167,8 @@ class Bridge:
         self.cors_origins = cors_origins or ["*"]
         self.title = title
         self.debug = debug
+        self.reload_includes = reload_includes
+        self.reload_excludes = reload_excludes
         self._ts_generated = False
 
         setup_logging(logging.DEBUG if debug else logging.INFO, debug=debug)
@@ -482,15 +488,21 @@ Commands:   {len(commands)}"""
                 import_modules=list(command_modules),
             )
 
-            uvicorn.run(
-                "zynk.server:create_app",
-                host=self.host,
-                port=self.port,
-                reload=True,
-                reload_dirs=["."],
-                factory=True,
-                log_level="debug" if self.debug else "info",
-            )
+            uvicorn_kwargs = {
+                "app": "zynk.server:create_app",
+                "host": self.host,
+                "port": self.port,
+                "reload": True,
+                "reload_dirs": ["."],
+                "factory": True,
+                "log_level": "debug" if self.debug else "info",
+            }
+            if self.reload_includes is not None:
+                uvicorn_kwargs["reload_includes"] = self.reload_includes
+            if self.reload_excludes is not None:
+                uvicorn_kwargs["reload_excludes"] = self.reload_excludes
+
+            uvicorn.run(**uvicorn_kwargs)
         else:
             uvicorn.run(
                 self.app,
